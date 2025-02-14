@@ -8,4 +8,5 @@ How to build?
     For me it's under C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\VC\Tools\MSVC\14.29.30133\bin\Hostx64\x64
 3. Run cl encode.cpp
     Add option /Zi if you want to generate a PDB file for debugging.
+    For more details, check out https://learn.microsoft.com/en-us/cpp/build/reference/z7-zi-zi-debug-information-format?view=msvc-170
 4. Run ./encode.exe
