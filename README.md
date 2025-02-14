@@ -6,6 +6,6 @@ How to build?
 2. Add cl.exe to your PATH.
     This is your compiler + linker
     For me it's under C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\VC\Tools\MSVC\14.29.30133\bin\Hostx64\x64
-3. Run cl.exe main.cpp
-    Add option /Z7 if you want to embed debug information into your obj file.
-4. Run ./main.exe
+3. Run cl encode.cpp
+    Add option /Zi if you want to generate a PDB file for debugging.
+4. Run ./encode.exe
