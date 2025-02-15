@@ -1,3 +1,4 @@
+#pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "D3D11.lib")
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mf.lib")
@@ -7,12 +8,15 @@
 
 // std
 #include <string>
+#include <iostream>
+#include <fstream>
 
 // Windows
 #include <windows.h>
 #include <atlbase.h>
 
 // DirectX
+#include <dxgi.h>
 #include <d3d11.h>
 
 // Media Foundation
@@ -40,11 +44,10 @@ int main()
     CHECK_HR(CoInitializeEx(NULL, COINIT_APARTMENTTHREADED));
     CHECK_HR(MFStartup(MF_VERSION));
 
-    for (;;)
+    int iterations = 1;
+    for (int i = 0; i < iterations; ++i)
     {
         runEncode();
-        if (getchar() == 'q')
-            break;
     }
 
     CHECK_HR(MFShutdown());
@@ -54,6 +57,9 @@ int main()
 
 void runEncode()
 {
+    DXGI_ADAPTER_DESC desc;
+    CComPtr<IDXGIFactory1> factory;
+    CComPtr<IDXGIAdapter> adapter;
     CComPtr<ID3D11Device> device;
     CComPtr<ID3D11DeviceContext> context;
     CComPtr<IMFDXGIDeviceManager> deviceManager;
@@ -65,12 +71,37 @@ void runEncode()
     DWORD inputStreamID;
     DWORD outputStreamID;
 
+    // ------------------------------------------------------------------------
+    // Open File
+    // ------------------------------------------------------------------------
+
+    std::ofstream fout;
+    fout.open("vid.h264", std::ios::binary | std::ios::out | std::ios::trunc);
 
     // ------------------------------------------------------------------------
     // Initialize D3D11
     // ------------------------------------------------------------------------
 
-    CHECK_HR(D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_DEBUG, NULL, 0, D3D11_SDK_VERSION, &device, NULL, &context));
+    CHECK_HR(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
+    UINT index = 0;
+    HRESULT adapterHr;
+    while (true)
+    {
+        adapterHr = factory->EnumAdapters(index++, &adapter);
+        if (FAILED(adapterHr))
+            break;
+
+        CHECK_HR(adapter->GetDesc(&desc));
+
+        // Check for software adapter
+        if (desc.VendorId == 0x1002 || desc.VendorId == 0x10DE)
+        {
+            break;
+        }
+    }
+
+    D3D_FEATURE_LEVEL featureLevels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
+    CHECK_HR(D3D11CreateDevice(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_DEBUG, featureLevels, 4, D3D11_SDK_VERSION, &device, NULL, &context));
 
     {
         // Probably not necessary in this application, but maybe the MFT requires it?
@@ -98,25 +129,16 @@ void runEncode()
         MFT_REGISTER_TYPE_INFO inInfo = { MFMediaType_Video, MFVideoFormat_NV12 };
         MFT_REGISTER_TYPE_INFO outInfo = { MFMediaType_Video, MFVideoFormat_H264 };
 
-        // Query for the adapter LUID to get a matching encoder for the device.
-        CComQIPtr<IDXGIDevice> dxgiDevice(device);
-        CHECK(dxgiDevice);
-        CComPtr<IDXGIAdapter> adapter;
-        CHECK_HR(dxgiDevice->GetAdapter(&adapter));
+        //CComPtr<IMFAttributes> enumAttrs;
+        //CHECK_HR(MFCreateAttributes(&enumAttrs, 1));
+        //CHECK_HR(enumAttrs->SetBlob(MFT_ENUM_ADAPTER_LUID, (BYTE*)&desc.AdapterLuid, sizeof(LUID)));
 
-        DXGI_ADAPTER_DESC adapterDesc;
-        CHECK_HR(adapter->GetDesc(&adapterDesc));
-
-        CComPtr<IMFAttributes> enumAttrs;
-        CHECK_HR(MFCreateAttributes(&enumAttrs, 1));
-        CHECK_HR(enumAttrs->SetBlob(MFT_ENUM_ADAPTER_LUID, (BYTE*)&adapterDesc.AdapterLuid, sizeof(LUID)));
-
-        CHECK_HR(MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, &inInfo, &outInfo, enumAttrs, &activateRaw, &activateCount));
+        CHECK_HR(MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE, &inInfo, &outInfo, &activateRaw, &activateCount));
 
         CHECK(activateCount != 0);
 
         // Choose the first returned encoder
-        CComPtr<IMFActivate> activate = activateRaw[0];
+        CComPtr<IMFActivate> activate = activateRaw[1];
 
         // Memory management
         for (UINT32 i = 0; i < activateCount; i++)
@@ -135,6 +157,17 @@ void runEncode()
     // ------------------------------------------------------------------------
 
     {
+        UINT32 nameLength;
+        std::wstring name;
+
+        CHECK_HR(transformAttrs->GetStringLength(MFT_FRIENDLY_NAME_Attribute, &nameLength));
+
+        // IMFAttributes::GetString returns a null-terminated wide string
+        name.resize((size_t)nameLength + 1);
+        CHECK_HR(transformAttrs->GetString(MFT_FRIENDLY_NAME_Attribute, &name[0], (UINT32)name.size(), &nameLength));
+        name.resize(nameLength);
+
+        printf("Using %ls\n", name.c_str());
 
         // Unlock the transform for async use and get event generator
         CHECK_HR(transformAttrs->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE));
@@ -229,7 +262,7 @@ void runEncode()
         case METransformNeedInput:
         {
             // Generate texture
-            ID3D11Texture2D* texture;
+            CComPtr<ID3D11Texture2D> texture;
             D3D11_TEXTURE2D_DESC desc;
             ZeroMemory(&desc, sizeof(D3D11_TEXTURE2D_DESC));
 
@@ -243,7 +276,12 @@ void runEncode()
             desc.Usage = D3D11_USAGE_DYNAMIC;
             desc.BindFlags = D3D11_BIND_VIDEO_ENCODER;
 
-            CHECK_HR(device->CreateTexture2D(&desc, nullptr, &texture));
+            HRESULT hr = device->CreateTexture2D(&desc, nullptr, &texture);
+            if (FAILED(hr))
+            {
+                printf("?\n");
+                return;
+            }
 
             D3D11_MAPPED_SUBRESOURCE mappedResource;
             ZeroMemory(&mappedResource, sizeof(D3D11_MAPPED_SUBRESOURCE));
@@ -251,7 +289,7 @@ void runEncode()
             // Lock texture
             CHECK_HR(context->Map(texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource));
             //  Update the vertex buffer here.
-            memset(mappedResource.pData, 128, length);
+            memset(mappedResource.pData, 200, length);
             //  Reenable GPU access to the vertex buffer data.
             context->Unmap(texture, 0);
 
@@ -295,6 +333,13 @@ void runEncode()
 
             printf("METransformHaveOutput buffers=%d, bytes=%d\n", bufCount, bufLength);
 
+            // write bytes to file
+            BYTE* encodedData;
+            DWORD encodedLength;
+            CHECK_HR(outBuffer->Lock(&encodedData, nullptr, &encodedLength));
+            fout.write((char*)encodedData, encodedLength);
+            CHECK_HR(outBuffer->Unlock());
+
             // Release the sample as it is not processed further.
             if (outputBuffer.pSample)
                 outputBuffer.pSample->Release();
@@ -327,4 +372,5 @@ void runEncode()
     //deviceManager->ResetDevice(NULL, resetToken);
 
     CHECK_HR(MFShutdownObject(transform));
+    fout.close();
 }
