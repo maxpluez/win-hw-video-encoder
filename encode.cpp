@@ -33,8 +33,8 @@
 #define CHECK_HR(x) { HRESULT hr_ = (x); if (FAILED(hr_)) { printf("%s(%d) %s failed with 0x%x\n", __FILE__, __LINE__, #x, hr_); throw std::exception(); } }
 
 // Constants
-constexpr UINT ENCODE_WIDTH = 1920;
-constexpr UINT ENCODE_HEIGHT = 1080;
+constexpr UINT ENCODE_WIDTH = 1280;
+constexpr UINT ENCODE_HEIGHT = 720;
 //constexpr UINT ENCODE_FRAMES = 60;
 constexpr UINT64 mfDuration = /*10000000 / ENCODE_FRAMES*/ 16000;
 UINT64 mfTicks = 0;
@@ -169,12 +169,14 @@ public:
         CComPtr<IMFMediaType> outputType;
         CHECK_HR(MFCreateMediaType(&outputType));
 
+        CHECK_HR(outputType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High));
+        CHECK_HR(outputType->SetUINT32(MF_MT_MPEG2_LEVEL, eAVEncH264VLevel4_2));
         CHECK_HR(outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
         CHECK_HR(outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264));
-        CHECK_HR(outputType->SetUINT32(MF_MT_AVG_BITRATE, 30000000));
+        CHECK_HR(outputType->SetUINT32(MF_MT_AVG_BITRATE, 4000000));
         CHECK_HR(MFSetAttributeSize(outputType, MF_MT_FRAME_SIZE, ENCODE_WIDTH, ENCODE_HEIGHT));
-        CHECK_HR(MFSetAttributeRatio(outputType, MF_MT_FRAME_RATE, 60, 1));
-        CHECK_HR(outputType->SetUINT32(MF_MT_INTERLACE_MODE, 2));
+        //CHECK_HR(MFSetAttributeRatio(outputType, MF_MT_FRAME_RATE, 60, 1));
+        CHECK_HR(outputType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive));
         CHECK_HR(outputType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE));
 
         CHECK_HR(processor->SetOutputType(outputStreamID, outputType, 0));
@@ -186,7 +188,7 @@ public:
         CHECK_HR(inputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
         CHECK_HR(inputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_ARGB32));
         CHECK_HR(MFSetAttributeSize(inputType, MF_MT_FRAME_SIZE, ENCODE_WIDTH, ENCODE_HEIGHT));
-        CHECK_HR(MFSetAttributeRatio(inputType, MF_MT_FRAME_RATE, 60, 1));
+        CHECK_HR(MFSetAttributeRatio(inputType, MF_MT_FRAME_RATE, 30, 1));
 
         CHECK_HR(processor->SetInputType(inputStreamID, inputType, 0));
 
@@ -264,7 +266,7 @@ public:
             D3D11_TEXTURE2D_DESC desc;
             ZeroMemory(&desc, sizeof(D3D11_TEXTURE2D_DESC));
 
-            desc.Format = DXGI_FORMAT_NV12;
+            desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
             desc.Width = ENCODE_WIDTH;
             desc.Height = ENCODE_HEIGHT;
             desc.MipLevels = 1;
@@ -272,18 +274,18 @@ public:
             desc.SampleDesc.Count = 1;
             desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
             desc.Usage = D3D11_USAGE_DYNAMIC;
-            desc.BindFlags = D3D11_BIND_VIDEO_ENCODER;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
             HRESULT hr = device11->CreateTexture2D(&desc, nullptr, &texture);
             if (FAILED(hr))
             {
                 printf("?\n");
-                return 0;
+                break;
             }
 
             D3D11_MAPPED_SUBRESOURCE mappedResource;
             ZeroMemory(&mappedResource, sizeof(D3D11_MAPPED_SUBRESOURCE));
-            DWORD length = ENCODE_WIDTH * ENCODE_HEIGHT * 3 / 2;
+            DWORD length = ENCODE_WIDTH * ENCODE_HEIGHT * 4;
             // Lock texture
             CHECK_HR(context11->Map(texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource));
             //  Update the vertex buffer here.
@@ -303,7 +305,12 @@ public:
             // Other fields for sample
             mfTicks += mfDuration;
             CHECK_HR(dxgiSample->SetSampleTime(mfTicks));
-            CHECK_HR(dxgiSample->SetSampleDuration(mfDuration));
+            hr = (dxgiSample->SetSampleDuration(mfDuration));
+            if (FAILED(hr))
+            {
+                printf("??\n");
+                break;
+            }
 
             CHECK_HR(processor->ProcessInput(inputStreamID, dxgiSample, 0));
 
