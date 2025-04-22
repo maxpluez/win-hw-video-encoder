@@ -11,3 +11,4 @@ How to build?
     Add option /EHsc to mute some warnings.
     For more details, check out https://learn.microsoft.com/en-us/cpp/build/reference/z7-zi-zi-debug-information-format?view=msvc-170
 4. Run ./encode.exe
+5. To mux H264 into MP4, call `ffmpeg -framerate 60 -i vid.h264 -c copy output.mp4`
