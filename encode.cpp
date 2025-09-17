@@ -83,6 +83,7 @@ void runEncode()
     // ------------------------------------------------------------------------
 
     CHECK_HR(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
+    /*
     UINT index = 0;
     HRESULT adapterHr;
     while (true)
@@ -99,7 +100,7 @@ void runEncode()
             break;
         }
     }
-
+    */
     D3D_FEATURE_LEVEL featureLevels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
     CHECK_HR(D3D11CreateDevice(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_DEBUG, featureLevels, 4, D3D11_SDK_VERSION, &device, NULL, &context));
 
@@ -138,7 +139,7 @@ void runEncode()
         CHECK(activateCount != 0);
 
         // Choose the first returned encoder
-        CComPtr<IMFActivate> activate = activateRaw[1];
+        CComPtr<IMFActivate> activate = activateRaw[0];
 
         // Memory management
         for (UINT32 i = 0; i < activateCount; i++)
@@ -157,6 +158,7 @@ void runEncode()
     // ------------------------------------------------------------------------
 
     {
+        /*
         UINT32 nameLength;
         std::wstring name;
 
@@ -168,6 +170,7 @@ void runEncode()
         name.resize(nameLength);
 
         printf("Using %ls\n", name.c_str());
+        */
 
         // Unlock the transform for async use and get event generator
         CHECK_HR(transformAttrs->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE));
@@ -279,7 +282,6 @@ void runEncode()
             HRESULT hr = device->CreateTexture2D(&desc, nullptr, &texture);
             if (FAILED(hr))
             {
-                printf("?\n");
                 return;
             }
 
