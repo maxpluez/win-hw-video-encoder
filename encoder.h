@@ -30,20 +30,24 @@
 #include <mfreadwrite.h>
 #include <mferror.h>
 #include <codecapi.h>
+#include <mftransform.h>
+#include <mfobjects.h>
 
 // Error handling
 #define CHECK(x) if (!(x)) { printf("%s(%d) %s was false\n", __FILE__, __LINE__, #x); return; }
 #define CHECK_HR(x) { HRESULT hr_ = (x); if (FAILED(hr_)) { printf("%s(%d) %s failed with 0x%x\n", __FILE__, __LINE__, #x, (unsigned int)hr_); return; } }
+#define RETURN_FALSE_ON_FAILED_HR(x) { HRESULT hr_ = (x); if (FAILED(hr_)) { printf("%s(%d) %s failed with 0x%x\n", __FILE__, __LINE__, #x, (unsigned int)hr_); return false; } }
 
-constexpr UINT64 mfDuration = 10000000 / 120;
+constexpr UINT64 mfDuration = 10000000 / 30;
 UINT64 mfTicks = 0;
 
 class Encoder
 {
 public:
-    Encoder(Header inHeader, Header outHeader)
+    Encoder(Header inHeader, Header outHeader, bool hardware)
         : inWidth(inHeader.width)
         , inHeight(inHeader.height)
+        , hardware(hardware)
     {
         // ------------------------------------------------------------------------
         // Initialize COM and Media Foundation
@@ -55,43 +59,44 @@ public:
         // ------------------------------------------------------------------------
         // Initialize D3D11
         // ------------------------------------------------------------------------
-
-        CHECK_HR(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
-        /*
-        UINT index = 0;
-        HRESULT adapterHr;
-        while (true)
+        if (hardware)
         {
-            adapterHr = factory->EnumAdapters(index++, &adapter);
-            if (FAILED(adapterHr))
-                break;
+            CHECK_HR(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
 
-            CHECK_HR(adapter->GetDesc(&desc));
-
-            // Check for software adapter
-            if (index > 2 && (desc.VendorId == 0x1002 || desc.VendorId == 0x10DE))
+            UINT index = 0;
+            HRESULT adapterHr;
+            while (true)
             {
-                break;
+                adapterHr = factory->EnumAdapters(index++, &adapter);
+                if (FAILED(adapterHr))
+                    break;
+
+                CHECK_HR(adapter->GetDesc(&desc));
+
+                // Check for software adapter
+                if (desc.VendorId == 0x1002 || desc.VendorId == 0x10DE)
+                {
+                    break;
+                }
+                adapter.Release();
+                ZeroMemory(&desc, sizeof(desc));
             }
-            adapter.Release();
-            memset(&desc, 0, sizeof(desc));
+
+            D3D_FEATURE_LEVEL featureLevels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
+            CHECK_HR(D3D11CreateDevice(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, featureLevels, 4, D3D11_SDK_VERSION, &device, NULL, &context));
+            /*
+            {
+                // Probably not necessary in this application, but maybe the MFT requires it?
+                CComQIPtr<ID3D10Multithread> mt(device);
+                CHECK(mt);
+                mt->SetMultithreadProtected(TRUE);
+            }
+            */
+            // Create device manager
+            UINT resetToken;
+            CHECK_HR(MFCreateDXGIDeviceManager(&resetToken, &deviceManager));
+            CHECK_HR(deviceManager->ResetDevice(device, resetToken));
         }
-        */
-        D3D_FEATURE_LEVEL featureLevels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
-        CHECK_HR(D3D11CreateDevice(nullptr, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, featureLevels, 4, D3D11_SDK_VERSION, &device, NULL, &context));
-
-        {
-            // Probably not necessary in this application, but maybe the MFT requires it?
-            CComQIPtr<ID3D10Multithread> mt(device);
-            CHECK(mt);
-            mt->SetMultithreadProtected(TRUE);
-        }
-
-        // Create device manager
-        UINT resetToken;
-        CHECK_HR(MFCreateDXGIDeviceManager(&resetToken, &deviceManager));
-        CHECK_HR(deviceManager->ResetDevice(device, resetToken));
-
 
         // ------------------------------------------------------------------------
         // Initialize hardware encoder MFT
@@ -110,19 +115,29 @@ public:
             //CHECK_HR(MFCreateAttributes(&enumAttrs, 1));
             //CHECK_HR(enumAttrs->SetBlob(MFT_ENUM_ADAPTER_LUID, (BYTE*)&desc.AdapterLuid, sizeof(LUID)));
 
-            CHECK_HR(MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE, &inInfo, &outInfo, &activateRaw, &activateCount));
+            CHECK_HR(MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, hardware ? MFT_ENUM_FLAG_HARDWARE : 0, &inInfo, &outInfo, &activateRaw, &activateCount));
 
             CHECK(activateCount != 0);
 
             // Choose the first returned encoder
-            CComPtr<IMFActivate> activate = activateRaw[0];
+            CComPtr<IMFActivate> activate = activateRaw[1];
+
+            // Print name
+            UINT32 nameLength;
+            std::wstring name;
+            CHECK_HR(activate->GetStringLength(MFT_FRIENDLY_NAME_Attribute, &nameLength));
+            // IMFAttributes::GetString returns a null-terminated wide string
+            name.resize((size_t)nameLength + 1);
+            CHECK_HR(activate->GetString(MFT_FRIENDLY_NAME_Attribute, &name[0], (UINT32)name.size(), &nameLength));
+            name.resize(nameLength);
+            printf("Using %ls\n", name.c_str());
+
+            // Activate
+            CHECK_HR(activate->ActivateObject(IID_PPV_ARGS(&transform)));
 
             // Memory management
             for (UINT32 i = 0; i < activateCount; i++)
                 activateRaw[i]->Release();
-
-            // Activate
-            CHECK_HR(activate->ActivateObject(IID_PPV_ARGS(&transform)));
 
             // Get attributes
             CHECK_HR(transform->GetAttributes(&transformAttrs));
@@ -130,29 +145,18 @@ public:
 
 
         // ------------------------------------------------------------------------
-        // Query encoder name (not necessary, but nice) and unlock for async use
+        // Config the transform
         // ------------------------------------------------------------------------
 
         {
-            /*
-            UINT32 nameLength;
-            std::wstring name;
-
-            CHECK_HR(transformAttrs->GetStringLength(MFT_FRIENDLY_NAME_Attribute, &nameLength));
-
-            // IMFAttributes::GetString returns a null-terminated wide string
-            name.resize((size_t)nameLength + 1);
-            CHECK_HR(transformAttrs->GetString(MFT_FRIENDLY_NAME_Attribute, &name[0], (UINT32)name.size(), &nameLength));
-            name.resize(nameLength);
-
-            printf("Using %ls\n", name.c_str());
-            */
-            // Unlock the transform for async use and get event generator
-            CHECK_HR(transformAttrs->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE));
             CHECK_HR(transformAttrs->SetUINT32(MF_LOW_LATENCY, TRUE));
-            //HRESULT hrr = (transform->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(deviceManager.p)));
-            CHECK_HR(transform->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(deviceManager.p)));
-            CHECK(eventGen = transform);
+            if (hardware)
+            {
+                // Unlock the transform for async use and get event generator
+                CHECK_HR(transformAttrs->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE));
+                CHECK(eventGen = transform);
+                CHECK_HR(transform->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(deviceManager.p)));
+            }
         }
 
         // Get stream IDs (expect 1 input and 1 output stream)
@@ -180,7 +184,7 @@ public:
         CHECK_HR(outputType->SetUINT32(MF_MT_AVG_BITRATE, 30000000));
         CHECK_HR(MFSetAttributeSize(outputType, MF_MT_FRAME_SIZE, outHeader.width, outHeader.height));
         CHECK_HR(MFSetAttributeRatio(outputType, MF_MT_FRAME_RATE, outHeader.frameRate.num, outHeader.frameRate.den));
-        //CHECK_HR(outputType->SetUINT32(MF_MT_INTERLACE_MODE, 2));
+        CHECK_HR(outputType->SetUINT32(MF_MT_INTERLACE_MODE, 2));
         //CHECK_HR(outputType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE));
 
         CHECK_HR(transform->SetOutputType(outputStreamID, outputType, 0));
@@ -227,12 +231,12 @@ public:
         // Start encoding
         // ------------------------------------------------------------------------
 
-        CHECK_HR(transform->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, NULL));
+        //CHECK_HR(transform->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, NULL));
         CHECK_HR(transform->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, NULL));
         CHECK_HR(transform->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, NULL));
     }
 
-    void encode(FrameParser& parser)
+    void hwEncodeImpl(FrameParser& parser)
     {
         for (;;)
         {
@@ -253,6 +257,9 @@ public:
                     return;
                 }
                 
+                CComPtr<IMFSample> sample;
+                CHECK_HR(MFCreateSample(&sample));
+
                 // Generate texture
                 CComPtr<ID3D11Texture2D> texture;
                 D3D11_TEXTURE2D_DESC desc;
@@ -280,31 +287,30 @@ public:
                 // Lock texture
                 CHECK_HR(context->Map(texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource));
                 //  Update the vertex buffer here.
-                memcpy(mappedResource.pData, frame->yuv.data(), frame->yuv.size());
-                if (frame->fn == 142)
-                {
-                    std::ofstream fout = std::ofstream("framehaha142.yuv", std::ios::binary | std::ios::out | std::ios::trunc);
-                    fout.write((char*)mappedResource.pData, frame->yuv.size());
-                    fout.close();
+                BYTE* srcY = frame->yuv.data();
+                BYTE* dstY = (BYTE*)mappedResource.pData;
+                for (int y = 0; y < inHeight; ++y) {
+                    memcpy(dstY + y * mappedResource.RowPitch, srcY + y * inWidth, inWidth);
+                }
+                BYTE* srcUV = srcY + inWidth * inHeight;
+                BYTE* dstUV = (BYTE*)mappedResource.pData + mappedResource.RowPitch * inHeight;
+                for (int y = 0; y < inHeight / 2; ++y) {
+                    memcpy(dstUV + y * mappedResource.RowPitch, srcUV + y * inWidth, inWidth);
                 }
                 //  Reenable GPU access to the vertex buffer data.
                 context->Unmap(texture, 0);
 
                 // Create media buffer backed by DXGI
-                IMFMediaBuffer* dxgiMediaBuffer;
+                CComPtr<IMFMediaBuffer> dxgiMediaBuffer;
                 CHECK_HR(MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), texture, 0, FALSE, &dxgiMediaBuffer));
-
-                // Create sample
-                IMFSample* dxgiSample;
-                CHECK_HR(MFCreateSample(&dxgiSample));
-                CHECK_HR(dxgiSample->AddBuffer(dxgiMediaBuffer));
+                CHECK_HR(sample->AddBuffer(dxgiMediaBuffer));
 
                 // Other fields for sample
                 mfTicks += mfDuration;
-                CHECK_HR(dxgiSample->SetSampleTime(mfTicks));
-                CHECK_HR(dxgiSample->SetSampleDuration(mfDuration));
+                CHECK_HR(sample->SetSampleTime(mfTicks));
+                CHECK_HR(sample->SetSampleDuration(mfDuration));
 
-                CHECK_HR(transform->ProcessInput(inputStreamID, dxgiSample, 0));
+                CHECK_HR(transform->ProcessInput(inputStreamID, sample, 0));
 
                 // Dereferencing the device once after feeding each frame "fixes" the leak.
                 //device.p->Release();
@@ -317,7 +323,6 @@ public:
                 DWORD status;
                 MFT_OUTPUT_DATA_BUFFER outputBuffer = {};
                 outputBuffer.dwStreamID = outputStreamID;
-
 
                 HRESULT hr = (transform->ProcessOutput(0, 1, &outputBuffer, &status));
                 if (hr == MF_E_TRANSFORM_STREAM_CHANGE)
@@ -358,6 +363,108 @@ public:
         }
     }
 
+    bool swSendFrame(FrameParser& parser)
+    {
+        DWORD flags = 0;
+        RETURN_FALSE_ON_FAILED_HR(transform->GetInputStatus(0, &flags));
+        if ((flags & MFT_INPUT_STATUS_ACCEPT_DATA) == false)
+        {
+            return true;
+        }
+
+        auto frame = parser.readFrame();
+        if (!frame)
+        {
+            return false;
+        }
+        CComPtr<IMFSample> sample;
+        CComPtr<IMFMediaBuffer> memoryBuffer;
+        RETURN_FALSE_ON_FAILED_HR(MFCreateAlignedMemoryBuffer(frame->yuv.size(), MF_16_BYTE_ALIGNMENT, &memoryBuffer));
+        RETURN_FALSE_ON_FAILED_HR(MFCreateSample(&sample));
+        BYTE* bufferData;
+        memoryBuffer->Lock(&bufferData, nullptr, nullptr);
+        memoryBuffer->SetCurrentLength(frame->yuv.size());
+        memcpy(bufferData, frame->yuv.data(), frame->yuv.size());
+        memoryBuffer->Unlock();
+        sample->AddBuffer(memoryBuffer);
+        // Other fields for sample
+        mfTicks += mfDuration;
+        RETURN_FALSE_ON_FAILED_HR(sample->SetSampleTime(mfTicks));
+        RETURN_FALSE_ON_FAILED_HR(sample->SetSampleDuration(mfDuration));
+        RETURN_FALSE_ON_FAILED_HR(transform->ProcessInput(inputStreamID, sample, 0));
+        return true;
+    }
+
+    bool swReceivePacket()
+    {
+        MFT_OUTPUT_STREAM_INFO streamInfo;
+        RETURN_FALSE_ON_FAILED_HR(transform->GetOutputStreamInfo(0, &streamInfo));
+        CComPtr<IMFMediaBuffer> mediaBuffer;
+        CComPtr<IMFSample> sampleOut;
+        RETURN_FALSE_ON_FAILED_HR(MFCreateSample(&sampleOut));
+        RETURN_FALSE_ON_FAILED_HR(MFCreateMemoryBuffer(streamInfo.cbSize, &mediaBuffer));
+        RETURN_FALSE_ON_FAILED_HR(sampleOut->AddBuffer(mediaBuffer));
+
+        MFT_OUTPUT_DATA_BUFFER outputBuffer = {};
+        outputBuffer.dwStreamID = outputStreamID;
+        outputBuffer.pSample = sampleOut;
+        DWORD status;
+
+        HRESULT hr = (transform->ProcessOutput(0, 1, &outputBuffer, &status));
+        if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
+        {
+            return false;
+        }
+        else if (hr == MF_E_TRANSFORM_STREAM_CHANGE)
+        {
+            printf("\n\n!!!!! Request Stream Change !!!!!\n\n");
+        }
+        else
+        {
+            RETURN_FALSE_ON_FAILED_HR(hr);
+        }
+
+        DWORD bufCount;
+        DWORD bufLength;
+        RETURN_FALSE_ON_FAILED_HR(outputBuffer.pSample->GetBufferCount(&bufCount));
+
+        CComPtr<IMFMediaBuffer> outBuffer;
+        RETURN_FALSE_ON_FAILED_HR(outputBuffer.pSample->GetBufferByIndex(0, &outBuffer));
+        RETURN_FALSE_ON_FAILED_HR(outBuffer->GetCurrentLength(&bufLength));
+
+        printf("METransformHaveOutput buffers=%lu, bytes=%lu\n", bufCount, bufLength);
+
+        // write bytes to file
+        BYTE* encodedData;
+        DWORD encodedLength;
+        RETURN_FALSE_ON_FAILED_HR(outBuffer->Lock(&encodedData, nullptr, &encodedLength));
+        fout.write((char*)encodedData, encodedLength);
+        RETURN_FALSE_ON_FAILED_HR(outBuffer->Unlock());
+
+        // Release the sample as it is not processed further.
+        if (outputBuffer.pEvents)
+            outputBuffer.pEvents->Release();
+        return true;
+    }
+
+    void swEncodeImpl(FrameParser& parser)
+    {
+        bool sendFrameRunning = true;
+        bool receivePacketRunning = true;
+        while (sendFrameRunning || receivePacketRunning)
+        {
+            if (sendFrameRunning)
+                sendFrameRunning = swSendFrame(parser);
+            if (receivePacketRunning)
+                receivePacketRunning = swReceivePacket() || sendFrameRunning;
+        }
+    }
+
+    void encode(FrameParser& parser)
+    {
+        hardware ? hwEncodeImpl(parser) : swEncodeImpl(parser);
+    }
+
     ~Encoder()
     {
         // ------------------------------------------------------------------------
@@ -387,6 +494,7 @@ public:
 
 private:
     int inWidth, inHeight;
+    bool hardware;
     std::ofstream fout;
 
     DXGI_ADAPTER_DESC desc;

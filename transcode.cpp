@@ -17,6 +17,6 @@ int main() {
 
     std::unique_ptr<FrameParser> parser = std::make_unique<YuvParser>(file, inHeader);
     
-    Encoder encoder(inHeader, outHeader);
+    Encoder encoder(inHeader, outHeader, true);
     encoder.encode(*parser);
 }
