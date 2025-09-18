@@ -44,7 +44,7 @@ UINT64 mfTicks = 0;
 class Encoder
 {
 public:
-    Encoder(Header inHeader, Header outHeader, bool hardware)
+    Encoder(Header inHeader, Header outHeader, bool hardware, std::string outputFile)
         : inWidth(inHeader.width)
         , inHeight(inHeader.height)
         , hardware(hardware)
@@ -225,7 +225,7 @@ public:
         // Open the output file
         // ------------------------------------------------------------------------
 
-        fout.open("vid1.h264", std::ios::binary | std::ios::out | std::ios::trunc);
+        fout.open(outputFile, std::ios::binary | std::ios::out | std::ios::trunc);
 
         // ------------------------------------------------------------------------
         // Start encoding

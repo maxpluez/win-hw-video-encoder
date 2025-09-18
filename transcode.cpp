@@ -17,6 +17,6 @@ int main() {
 
     std::unique_ptr<FrameParser> parser = std::make_unique<YuvParser>(file, inHeader);
     
-    Encoder encoder(inHeader, outHeader, true);
+    Encoder encoder(inHeader, outHeader, true, "vid.h264");
     encoder.encode(*parser);
 }

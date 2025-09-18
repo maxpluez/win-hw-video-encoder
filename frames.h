@@ -89,3 +89,22 @@ class FrameParser
 public:
     virtual std::unique_ptr<Frame> readFrame() = 0;
 };
+
+class ConstantParser : public FrameParser {
+    int fn = 0;
+    int frames = 0;
+    Header header;
+public:
+    ConstantParser(int frames, Header header) : frames(frames), header(std::move(header)) {}
+
+    std::unique_ptr<Frame> readFrame() override {
+        if (fn >= frames) return nullptr;
+        std::vector<uint8_t> dst(header.frameSize());
+        memset(dst.data(), 128, dst.size());
+        auto frame = std::make_unique<Frame>(fn++, std::move(dst));
+        frame->timescale = header.timeScale;
+        frame->pts = frame->fn * header.frameRate.den;
+        frame->duration = int(header.frameRate.den);
+        return frame;
+    }
+};
