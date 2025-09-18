@@ -225,7 +225,7 @@ public:
         // Open the output file
         // ------------------------------------------------------------------------
 
-        fout.open("vid.h264", std::ios::binary | std::ios::out | std::ios::trunc);
+        fout.open("vid1.h264", std::ios::binary | std::ios::out | std::ios::trunc);
 
         // ------------------------------------------------------------------------
         // Start encoding
