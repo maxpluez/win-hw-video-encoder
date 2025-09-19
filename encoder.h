@@ -38,13 +38,10 @@
 #define CHECK_HR(x) { HRESULT hr_ = (x); if (FAILED(hr_)) { printf("%s(%d) %s failed with 0x%x\n", __FILE__, __LINE__, #x, (unsigned int)hr_); return; } }
 #define RETURN_FALSE_ON_FAILED_HR(x) { HRESULT hr_ = (x); if (FAILED(hr_)) { printf("%s(%d) %s failed with 0x%x\n", __FILE__, __LINE__, #x, (unsigned int)hr_); return false; } }
 
-constexpr UINT64 mfDuration = 10000000 / 30;
-UINT64 mfTicks = 0;
-
 class Encoder
 {
 public:
-    Encoder(Header inHeader, Header outHeader, bool hardware, std::string outputFile)
+    Encoder(Header inHeader, Header outHeader, bool hardware, std::string outputFile, int bitrate)
         : inWidth(inHeader.width)
         , inHeight(inHeader.height)
         , hardware(hardware)
@@ -120,7 +117,7 @@ public:
             CHECK(activateCount != 0);
 
             // Choose the first returned encoder
-            CComPtr<IMFActivate> activate = activateRaw[1];
+            CComPtr<IMFActivate> activate = activateRaw[hardware ? 1 : 0];
 
             // Print name
             UINT32 nameLength;
@@ -149,7 +146,27 @@ public:
         // ------------------------------------------------------------------------
 
         {
-            CHECK_HR(transformAttrs->SetUINT32(MF_LOW_LATENCY, TRUE));
+            CComPtr<ICodecAPI> codecApi;
+            CHECK_HR(transform->QueryInterface(IID_PPV_ARGS(&codecApi)));
+
+            /*
+            VARIANT rateControlMode;
+            rateControlMode.vt = VT_UI4;
+            rateControlMode.ulVal = eAVEncCommonRateControlMode_CBR;
+            CHECK_HR(codecApi->SetValue(&CODECAPI_AVEncCommonRateControlMode, &rateControlMode));
+
+            VARIANT meanBitrate;
+            meanBitrate.vt = VT_UI4;
+            meanBitrate.ulVal = bitrate;
+            HRESULT hr_range = (codecApi->SetValue(&CODECAPI_AVEncCommonMeanBitRate, &meanBitrate));
+            */
+
+            //VARIANT quality;
+            //quality.vt = VT_UI4;
+            //quality.ulVal = 0;
+            //HRESULT hr_range = (codecApi->SetValue(&CODECAPI_AVEncCommonQuality, &quality));
+
+            //CHECK_HR(transformAttrs->SetUINT32(MF_LOW_LATENCY, TRUE));
             if (hardware)
             {
                 // Unlock the transform for async use and get event generator
@@ -181,11 +198,11 @@ public:
 
         CHECK_HR(outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
         CHECK_HR(outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264));
-        CHECK_HR(outputType->SetUINT32(MF_MT_AVG_BITRATE, 30000000));
+        CHECK_HR(outputType->SetUINT32(MF_MT_AVG_BITRATE, bitrate));
         CHECK_HR(MFSetAttributeSize(outputType, MF_MT_FRAME_SIZE, outHeader.width, outHeader.height));
         CHECK_HR(MFSetAttributeRatio(outputType, MF_MT_FRAME_RATE, outHeader.frameRate.num, outHeader.frameRate.den));
         CHECK_HR(outputType->SetUINT32(MF_MT_INTERLACE_MODE, 2));
-        //CHECK_HR(outputType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE));
+        CHECK_HR(outputType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE));
 
         CHECK_HR(transform->SetOutputType(outputStreamID, outputType, 0));
 
@@ -306,9 +323,8 @@ public:
                 CHECK_HR(sample->AddBuffer(dxgiMediaBuffer));
 
                 // Other fields for sample
-                mfTicks += mfDuration;
-                CHECK_HR(sample->SetSampleTime(mfTicks));
-                CHECK_HR(sample->SetSampleDuration(mfDuration));
+                CHECK_HR(sample->SetSampleTime(frame->pts));
+                CHECK_HR(sample->SetSampleDuration(frame->duration));
 
                 CHECK_HR(transform->ProcessInput(inputStreamID, sample, 0));
 
@@ -343,7 +359,7 @@ public:
                 CHECK_HR(outputBuffer.pSample->GetBufferByIndex(0, &outBuffer));
                 CHECK_HR(outBuffer->GetCurrentLength(&bufLength));
 
-                printf("METransformHaveOutput buffers=%d, bytes=%d\n", bufCount, bufLength);
+                printf("METransformHaveOutput buffers=%lu, bytes=%lu\n", bufCount, bufLength);
 
                 // write bytes to file
                 BYTE* encodedData;
@@ -388,9 +404,8 @@ public:
         memoryBuffer->Unlock();
         sample->AddBuffer(memoryBuffer);
         // Other fields for sample
-        mfTicks += mfDuration;
-        RETURN_FALSE_ON_FAILED_HR(sample->SetSampleTime(mfTicks));
-        RETURN_FALSE_ON_FAILED_HR(sample->SetSampleDuration(mfDuration));
+        RETURN_FALSE_ON_FAILED_HR(sample->SetSampleTime(frame->pts));
+        RETURN_FALSE_ON_FAILED_HR(sample->SetSampleDuration(frame->duration));
         RETURN_FALSE_ON_FAILED_HR(transform->ProcessInput(inputStreamID, sample, 0));
         return true;
     }

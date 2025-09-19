@@ -3,6 +3,7 @@
 // Constants
 constexpr UINT ENCODE_WIDTH = 1920;
 constexpr UINT ENCODE_HEIGHT = 1080;
+constexpr UINT BITRATE = 5000;
 
 void runEncode();
 
@@ -29,6 +30,6 @@ void runEncode()
 
     std::unique_ptr<FrameParser> parser = std::make_unique<ConstantParser>(300, inHeader);
     
-    Encoder encoder(inHeader, outHeader, true, "constant.h264");
+    Encoder encoder(inHeader, outHeader, true, "constant.h264", BITRATE);
     encoder.encode(*parser);
 }

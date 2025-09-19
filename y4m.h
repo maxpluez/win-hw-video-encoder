@@ -6,20 +6,9 @@
 #include <cstring>
 
 struct Y4MHeader {
-    int width = 0, height = 0;
-    Rational frameRate = Rational::ONE;
-    Interlacing interlacing = Interlacing::Progressive;
-    Rational aspectRatio = Rational::ONE;
-    Colorspace colorspace = Colorspace::C420;
+    Header header;
     std::string comment;
     int64_t timeScale = -1;
-
-    int frameSize() const {
-        if (is420(colorspace)) return width * height * 3 / 2;
-        if (is422(colorspace)) return width * height * 2;
-        if (is444(colorspace)) return width * height * 3;
-        return 0;
-    }
 
     static Colorspace parseColorspace(const std::string& s) {
         if (s == "C420jpeg") return Colorspace::C420jpeg;
@@ -41,12 +30,12 @@ struct Y4MHeader {
             char key = s[0];
             std::string value = s.substr(1);
             switch (key) {
-                case 'W': header.width = std::stoi(value); break;
-                case 'H': header.height = std::stoi(value); break;
-                case 'F': header.frameRate = Rational::parse(value); header.timeScale = header.frameRate.num; break;
-                case 'I': header.interlacing = interlacingFromChar(s[1]); break;
-                case 'A': header.aspectRatio = Rational::parse(value); break;
-                case 'C': header.colorspace = parseColorspace(s); break;
+                case 'W': header.header.width = std::stoi(value); break;
+                case 'H': header.header.height = std::stoi(value); break;
+                case 'F': header.header.frameRate = Rational::parse(value); header.timeScale = header.header.frameRate.num; break;
+                case 'I': header.header.interlacing = interlacingFromChar(s[1]); break;
+                case 'A': header.header.aspectRatio = Rational::parse(value); break;
+                case 'C': header.header.colorspace = parseColorspace(s); break;
                 case 'X': header.comment = value; break;
             }
         }
@@ -64,19 +53,19 @@ public:
     Y4MParser(std::istream& input) : in(input), frameheader(6) {}
 
     const Y4MHeader& getHeader() {
-        if (header.width == 0) readHeader();
+        if (header.header.width == 0) readHeader();
         return header;
     }
 
     std::unique_ptr<Frame> readFrame() override {
-        if (header.width == 0) readHeader();
+        if (header.header.width == 0) readHeader();
         if (!readFrameHeader()) return nullptr;
-        std::vector<uint8_t> dst(header.frameSize());
+        std::vector<uint8_t> dst(header.header.frameSize());
         if (readFully(in, dst)) {
             auto frame = std::make_unique<Frame>(fn++, std::move(dst));
             frame->timescale = header.timeScale;
-            frame->pts = frame->fn * header.frameRate.den;
-            frame->duration = int(header.frameRate.den);
+            frame->pts = frame->fn * header.header.frameRate.den;
+            frame->duration = int(header.header.frameRate.den);
             return frame;
         }
         return nullptr;

@@ -7,3 +7,5 @@
 *.mp4
 *.y4m
 *.yuv
+*.json
+*.csv
