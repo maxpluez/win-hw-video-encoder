@@ -3,6 +3,7 @@
 
 #include "cli11.h"
 
+#include <chrono>
 #include <fstream>
 
 constexpr float GSUN = 0.07f; // 1 gsun = 0.07 bps per pixel
@@ -12,6 +13,18 @@ int main(int argc, char** argv) {
 
     int bitrate = 2000000;
     app.add_option("--bitrate", bitrate, "Bitrate for the output video in bps, default is 2000000");
+
+    bool hw = true;
+    app.add_option("--hardware", hw, "Use hardware encoding or software encoding, default is true");
+
+    std::string mode = "cbr";
+    app.add_option("--mode", mode, "Encoding mode with choice of cbr, vbr, quality, or fast, default is cbr");
+
+    int quality = 100;
+    app.add_option("--quality", quality, "Quality for quality-based encoding mode, default is 100");
+
+    int gop = 30;
+    app.add_option("--gop", gop, "Group of pictures size, default is 30");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -28,6 +41,10 @@ int main(int argc, char** argv) {
 
     std::unique_ptr<FrameParser> parser = std::make_unique<YUVParser>(file, inHeader);
 
-    Encoder encoder(inHeader, outHeader, true, "vid.h264", bitrate);
+    Encoder encoder(inHeader, outHeader, hw, "vid.h264", bitrate, mode, quality, gop);
+    auto start = std::chrono::high_resolution_clock::now();
     encoder.encode(*parser);
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> duration = end - start;
+    printf("Encoding time: %.3f ms\n", duration.count());
 }

@@ -15,28 +15,28 @@ from botocore.exceptions import ClientError
 
 GSUN = 0.07
 
-def generate_video_filename(gop, bitrate, mode, codec):
+def generate_video_filename(hardware, gop, bitrate, mode, quality, codec):
     """
     Generate output video file name in the format:
     "sonic720p-g<gop>-<bitrate>-<mode>-<codec>.mp4"
     """
-    return f"sonic720p-g{gop}-{bitrate}-{mode}-{codec}.mp4"
+    return f"sonic720p-{'hw' if hardware else 'sw'}-g{gop}-{bitrate}-{mode}{str(quality) if mode == 'quality' else ''}-{codec}.mp4"
 
-def generate_probe_filename(gop, bitrate, mode, codec):
+def generate_probe_filename(video_filename):
     """
     Generate output probe file name in the format:
     "sonic720p-g<gop>-<bitrate>-<mode>-<codec>-probe.json"
     """
-    return f"sonic720p-g{gop}-{bitrate}-{mode}-{codec}.mp4.json"
+    return f"{video_filename}.json"
 
-def generate_vmaf_filename(gop, bitrate, mode, codec):
+def generate_vmaf_filename(video_filename):
     """
     Generate output VMAF file name in the format:
     "sonic720p-g<gop>-<bitrate>-<mode>-<codec>-vmaf.json"
     """
-    return f"sonic720p-g{gop}-{bitrate}-{mode}-{codec}.mp4.vmaf.json"
+    return f"{video_filename}.vmaf.json"
 
-def generate_device_id(usingHardware):
+def generate_device_id():
     """
     Generate a device ID string in the format:
     "device id-device name-gpu name-hardware or software"
@@ -44,8 +44,6 @@ def generate_device_id(usingHardware):
     """
     # Device ID: use machine node or hostname
     device_id = platform.node() or os.environ.get('COMPUTERNAME', 'unknown')
-    # Device name: use platform.system() + release
-    device_name = f"{platform.system()} {platform.release()}"
     # GPU name: use GPUtil if available
     gpu_name = 'UnknownGPU'
     gpus = GPUtil.getGPUs()
@@ -53,9 +51,7 @@ def generate_device_id(usingHardware):
         gpu_name = gpus[0].name
     else:
         gpu_name = 'UnknownGPU'
-    # Hardware or software: check for presence of GPU, else 'software'
-    hw_or_sw = 'Hardware' if usingHardware else 'Software'
-    device_id_str = f"{device_id}-{device_name}-{gpu_name}-{hw_or_sw}"
+    device_id_str = f"{device_id}-{gpu_name}"
     return device_id_str.replace(' ', '_')
 
 def upload_to_s3(file, device_id, s3_file_name):
@@ -90,28 +86,37 @@ def main():
     args = parse_args()
 
     # Example: print device id string
-    device_id = generate_device_id(args.hardware)
+    device_id = generate_device_id()
+
+    aws_sso_cmd = ['aws', 'sso', 'login', '--profile', 'test-audiovisual']
+    result = subprocess.run(aws_sso_cmd)
+    if result.returncode != 0:
+        print('AWS SSO login failed. Will use existing AWS tokens in the environment.')
 
     if args.compile:
         print('Compiling transcode.cpp...')
         compile_cmd = ['cl', 'transcode.cpp', '/Zi', '/EHsc']
         result = subprocess.run(compile_cmd)
         if result.returncode != 0:
-            print('Compilation failed.')
-            sys.exit(1)
+            print('Compilation failed. Using the existing transcode.exe.')
 
-    #calculate the bitrate in bps from gsuns
+    #get all configurations to run
     configs = []
-    for bitrateGsun in [1.0, 1.5, 2.0, 2.5]:
+    for bitrateGsun in [1.0, 1.5, 2.0, 2.5, 10.0]:
         bitrate = int(float(args.width) * float(args.height) * float(args.framerate) * bitrateGsun * GSUN)
-        print("bitrate (bps): " + str(bitrate))
-        configs.append({ 'bitrate' : bitrate })
+        for mode in ['cbr', 'vbr', 'quality', 'fast']:
+            hws = [True] if mode == 'fast' else [True, False]
+            for hw in hws:
+                qualities = [0, 50, 100] if mode == 'quality' else [100]
+                for quality in qualities:
+                    for gop in [30, 90, 180]:
+                        configs.append({ 'bitrate' : bitrate, 'hardware' : hw, 'mode': mode, 'quality': quality, 'gop': gop })
 
     # Create and write header to csv
     csv_file = 'windows_quality.csv'
     csv_header = [
         'link', 'video id', 'device id', 'gpu', 'encoder', 'codec', 'mode', 'gop', 'fps',
-        'requested_bitrate', 'actual_bitrate', 'profile', 'vmaf_hmean', 'vmaf_stddev', 'bpb'
+        'requested_bitrate', 'actual_bitrate', 'profile', 'vmaf_hmean', 'vmaf_stddev', 'bpb', 'time_ms'
     ]
     with open(csv_file, 'w', newline='') as f:
         writer = csv.writer(f)
@@ -125,11 +130,29 @@ def main():
         #    transcode_cmd += ['--gop', str(args.gop)]
         if config['bitrate'] is not None and config['bitrate'] > 0:
             transcode_cmd += ['--bitrate', str(config['bitrate'])]
+        if config['hardware'] is not None:
+            transcode_cmd += ['--hardware', str(config['hardware']).lower()]
+        if config['mode'] is not None:
+            transcode_cmd += ['--mode', str(config['mode'])]
+        if config['quality'] is not None and config['mode'] == 'quality':
+            transcode_cmd += ['--quality', str(config['quality'])]
+        if config['gop'] is not None:
+            transcode_cmd += ['--gop', str(config['gop'])]
         #transcode_cmd += ['--width', str(args.width), '--height', str(args.height)]
-        result = subprocess.run(transcode_cmd)
+        # Run transcode.exe and capture output
+        result = subprocess.run(transcode_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print('transcode.exe failed.')
             sys.exit(1)
+        # Parse encoding time from output
+        encoding_time_ms = None
+        for line in result.stdout.splitlines():
+            if line.startswith('Encoding time:'):
+                try:
+                    encoding_time_ms = float(line.split(':')[1].strip().split()[0])
+                except Exception:
+                    encoding_time_ms = None
+                break
 
         print(f'Running ffmpeg to mux output to vid.mp4...')
         ffmpeg_cmd = ['ffmpeg', '-r', '30', '-i', 'vid.h264', '-c', 'copy', '-y', 'vid.mp4']
@@ -186,7 +209,7 @@ def main():
         gpu_name = device_id.split('-')[-2] if 'unknown' not in device_id.lower() else 'UnknownGPU'
 
         # Construct S3 link
-        video_s3_file_name = generate_video_filename(args.gop, config['bitrate'], args.mode, args.codec)
+        video_s3_file_name = generate_video_filename(config['hardware'], config['gop'], config['bitrate'], config['mode'], config['quality'], args.codec)
         s3_link = f"https://audiovisual-test-public.s3.us-east-1.amazonaws.com/videos/video-quality/{device_id}/{video_s3_file_name}"
 
         # Prepare data row
@@ -195,17 +218,18 @@ def main():
             device_id + "/" + video_s3_file_name,
             device_id,
             gpu_name,
-            'Hardware' if args.hardware else 'Software',
+            'Hardware' if config['hardware'] else 'Software',
             args.codec,
-            args.mode,
-            args.gop,
+            config['mode'] + ('' if config['mode'] != 'quality' else str(config['quality'])),
+            config['gop'],
             args.framerate,
             config['bitrate'],
             actual_bitrate,
             'Main', # Profile
             vmaf_harmonic_mean,
             vmaf_std_dev,
-            bpb
+            bpb,
+            str(encoding_time_ms) if encoding_time_ms is not None else 'N/A'
         ]
 
         # Append row to CSV
@@ -215,8 +239,8 @@ def main():
         # --- END CSV WRITING LOGIC ---
 
         upload_to_s3('vid.mp4', device_id, video_s3_file_name)
-        upload_to_s3('probe.json', device_id, generate_probe_filename(args.gop, config['bitrate'], args.mode, args.codec))
-        upload_to_s3('vmaf.json', device_id, generate_vmaf_filename(args.gop, config['bitrate'], args.mode, args.codec))
+        upload_to_s3('probe.json', device_id, generate_probe_filename(video_s3_file_name))
+        upload_to_s3('vmaf.json', device_id, generate_vmaf_filename(video_s3_file_name))
 
     os.remove('vid.h264')
     os.remove('vid.mp4')

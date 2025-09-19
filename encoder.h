@@ -41,7 +41,7 @@
 class Encoder
 {
 public:
-    Encoder(Header inHeader, Header outHeader, bool hardware, std::string outputFile, int bitrate)
+    Encoder(Header inHeader, Header outHeader, bool hardware, std::string outputFile, int bitrate, std::string& mode, int quality, int gop)
         : inWidth(inHeader.width)
         , inHeight(inHeader.height)
         , hardware(hardware)
@@ -149,22 +149,35 @@ public:
             CComPtr<ICodecAPI> codecApi;
             CHECK_HR(transform->QueryInterface(IID_PPV_ARGS(&codecApi)));
 
-            /*
             VARIANT rateControlMode;
             rateControlMode.vt = VT_UI4;
-            rateControlMode.ulVal = eAVEncCommonRateControlMode_CBR;
+            if (mode == "quality")
+            {
+                VARIANT quality;
+                quality.vt = VT_UI4;
+                quality.ulVal = 0;
+                CHECK_HR(codecApi->SetValue(&CODECAPI_AVEncCommonQuality, &quality));
+                rateControlMode.ulVal = eAVEncCommonRateControlMode_Quality;
+            }
+            else if (mode == "vbr")
+                rateControlMode.ulVal = eAVEncCommonRateControlMode_PeakConstrainedVBR;
+            else if (mode == "fast")
+                rateControlMode.ulVal = eAVEncCommonRateControlMode_LowDelayVBR;
+            else
+                rateControlMode.ulVal = eAVEncCommonRateControlMode_CBR;
             CHECK_HR(codecApi->SetValue(&CODECAPI_AVEncCommonRateControlMode, &rateControlMode));
 
+            VARIANT gopSize;
+            gopSize.vt = VT_UI4;
+            gopSize.ulVal = gop;
+            CHECK_HR(codecApi->SetValue(&CODECAPI_AVEncMPVGOPSize, &gopSize));
+
+            /*
             VARIANT meanBitrate;
             meanBitrate.vt = VT_UI4;
             meanBitrate.ulVal = bitrate;
             HRESULT hr_range = (codecApi->SetValue(&CODECAPI_AVEncCommonMeanBitRate, &meanBitrate));
             */
-
-            //VARIANT quality;
-            //quality.vt = VT_UI4;
-            //quality.ulVal = 0;
-            //HRESULT hr_range = (codecApi->SetValue(&CODECAPI_AVEncCommonQuality, &quality));
 
             //CHECK_HR(transformAttrs->SetUINT32(MF_LOW_LATENCY, TRUE));
             if (hardware)
@@ -359,7 +372,7 @@ public:
                 CHECK_HR(outputBuffer.pSample->GetBufferByIndex(0, &outBuffer));
                 CHECK_HR(outBuffer->GetCurrentLength(&bufLength));
 
-                printf("METransformHaveOutput buffers=%lu, bytes=%lu\n", bufCount, bufLength);
+                //printf("METransformHaveOutput buffers=%lu, bytes=%lu\n", bufCount, bufLength);
 
                 // write bytes to file
                 BYTE* encodedData;
