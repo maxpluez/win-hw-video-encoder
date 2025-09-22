@@ -26,6 +26,12 @@ int main(int argc, char** argv) {
     int gop = 30;
     app.add_option("--gop", gop, "Group of pictures size, default is 30");
 
+    std::string profile = "main";
+    app.add_option("--profile", profile, "H.264 profile with choice of baseline, main, high, or constrained, default is main");
+
+    std::string codec = "h264";
+    app.add_option("--codec", codec, "Codec to use for encoding with choice of h264 or h265");
+
     CLI11_PARSE(app, argc, argv);
 
     std::ifstream file("sonic720p.yuv", std::ios::binary);
@@ -41,7 +47,7 @@ int main(int argc, char** argv) {
 
     std::unique_ptr<FrameParser> parser = std::make_unique<YUVParser>(file, inHeader);
 
-    Encoder encoder(inHeader, outHeader, hw, "vid.h264", bitrate, mode, quality, gop);
+    Encoder encoder(inHeader, outHeader, hw, "vid", bitrate, mode, quality, gop, profile, codec);
     auto start = std::chrono::high_resolution_clock::now();
     encoder.encode(*parser);
     auto end = std::chrono::high_resolution_clock::now();

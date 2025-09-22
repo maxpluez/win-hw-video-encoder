@@ -15,24 +15,24 @@ from botocore.exceptions import ClientError
 
 GSUN = 0.07
 
-def generate_video_filename(hardware, gop, bitrate, mode, quality, codec):
+def generate_video_filename(hardware, gop, bitrate, mode, quality, codec, profile):
     """
     Generate output video file name in the format:
-    "sonic720p-g<gop>-<bitrate>-<mode>-<codec>.mp4"
+    "sonic720p-g<gop>-<bitrate>-<mode>-<codec>-<profile>.mp4"
     """
-    return f"sonic720p-{'hw' if hardware else 'sw'}-g{gop}-{bitrate}-{mode}{str(quality) if mode == 'quality' else ''}-{codec}.mp4"
+    return f"sonic720p-{'hw' if hardware else 'sw'}-g{gop}-{bitrate}-{mode}{str(quality) if mode == 'quality' else ''}-{codec}-{profile}.mp4"
 
 def generate_probe_filename(video_filename):
     """
     Generate output probe file name in the format:
-    "sonic720p-g<gop>-<bitrate>-<mode>-<codec>-probe.json"
+    "<video_filename>.json"
     """
     return f"{video_filename}.json"
 
 def generate_vmaf_filename(video_filename):
     """
     Generate output VMAF file name in the format:
-    "sonic720p-g<gop>-<bitrate>-<mode>-<codec>-vmaf.json"
+    "<video_filename>.vmaf.json"
     """
     return f"{video_filename}.vmaf.json"
 
@@ -99,18 +99,29 @@ def main():
         result = subprocess.run(compile_cmd)
         if result.returncode != 0:
             print('Compilation failed. Using the existing transcode.exe.')
+    
+    bitratesGsun = [1.0, 1.5, 2.0, 2.5, 3.0] # [1.0, 1.5, 2.0, 2.5, 10.0]
+    modes = ['cbr', 'vbr'] # ['cbr', 'vbr', 'quality', 'fast']
+    hws = [True, False] # [True, False]
+    qualities = [100] # [0, 50, 100]
+    gops = [30, 90, 180] # [30, 90, 180]
+    profiles = ["main"] # ["baseline", "main", "high", "constrained", "simple"]
+    codecs = ["h264", "hevc"]
 
     #get all configurations to run
     configs = []
-    for bitrateGsun in [1.0, 1.5, 2.0, 2.5, 10.0]:
+    # [1.0, 1.5, 2.0, 2.5, 10.0]
+    for bitrateGsun in bitratesGsun:
         bitrate = int(float(args.width) * float(args.height) * float(args.framerate) * bitrateGsun * GSUN)
-        for mode in ['cbr', 'vbr', 'quality', 'fast']:
-            hws = [True] if mode == 'fast' else [True, False]
+        for mode in modes:
+            hws = [True] if mode == 'fast' else hws
             for hw in hws:
-                qualities = [0, 50, 100] if mode == 'quality' else [100]
+                qualities = qualities if mode == 'quality' else [100]
                 for quality in qualities:
-                    for gop in [30, 90, 180]:
-                        configs.append({ 'bitrate' : bitrate, 'hardware' : hw, 'mode': mode, 'quality': quality, 'gop': gop })
+                    for gop in gops:
+                        for profile in profiles:
+                            for codec in codecs:
+                                configs.append({ 'bitrate' : bitrate, 'hardware' : hw, 'mode': mode, 'quality': quality, 'gop': gop, 'profile': profile, 'codec': codec })
 
     # Create and write header to csv
     csv_file = 'windows_quality.csv'
@@ -138,6 +149,10 @@ def main():
             transcode_cmd += ['--quality', str(config['quality'])]
         if config['gop'] is not None:
             transcode_cmd += ['--gop', str(config['gop'])]
+        if config['profile'] is not None:
+            transcode_cmd += ['--profile', str(config['profile'])]
+        if config['codec'] is not None:
+            transcode_cmd += ['--codec', str(config['codec'])]
         #transcode_cmd += ['--width', str(args.width), '--height', str(args.height)]
         # Run transcode.exe and capture output
         result = subprocess.run(transcode_cmd, capture_output=True, text=True)
@@ -155,8 +170,9 @@ def main():
                 break
 
         print(f'Running ffmpeg to mux output to vid.mp4...')
-        ffmpeg_cmd = ['ffmpeg', '-r', '30', '-i', 'vid.h264', '-c', 'copy', '-y', 'vid.mp4']
-        result = subprocess.run(ffmpeg_cmd)
+        raw_vid = f'vid.{'h265' if (config['codec'] is not None and (config['codec'] == 'hevc' or config['codec'] == 'h265')) else 'h264' }'
+        ffmpeg_cmd = ['ffmpeg', '-r', '30', '-i', raw_vid, '-c', 'copy', '-y', 'vid.mp4']
+        result = subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if result.returncode != 0:
             print('ffmpeg failed.')
             sys.exit(1)
@@ -164,7 +180,7 @@ def main():
         print(f'Running ffprobe...')
         ffprobe_cmd = ['ffprobe', '-print_format', 'json', '-show_frames', '-show_streams', 'vid.mp4']
         with open('probe.json', 'w') as f:
-            result = subprocess.run(ffprobe_cmd, stdout=f)
+            result = subprocess.run(ffprobe_cmd, stdout=f, stderr=subprocess.DEVNULL)
             if result.returncode != 0:
                 print('ffprobe failed.')
                 sys.exit(1)
@@ -180,7 +196,7 @@ def main():
             '-f', 'null',
             '-'
         ]
-        result = subprocess.run(vmaf_command)
+        result = subprocess.run(vmaf_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if result.returncode != 0:
             print('ffprobe failed.')
             sys.exit(1)
@@ -209,7 +225,7 @@ def main():
         gpu_name = device_id.split('-')[-2] if 'unknown' not in device_id.lower() else 'UnknownGPU'
 
         # Construct S3 link
-        video_s3_file_name = generate_video_filename(config['hardware'], config['gop'], config['bitrate'], config['mode'], config['quality'], args.codec)
+        video_s3_file_name = generate_video_filename(config['hardware'], config['gop'], config['bitrate'], config['mode'], config['quality'], config['codec'], config['profile'])
         s3_link = f"https://audiovisual-test-public.s3.us-east-1.amazonaws.com/videos/video-quality/{device_id}/{video_s3_file_name}"
 
         # Prepare data row
@@ -219,13 +235,13 @@ def main():
             device_id,
             gpu_name,
             'Hardware' if config['hardware'] else 'Software',
-            args.codec,
+            config['codec'],
             config['mode'] + ('' if config['mode'] != 'quality' else str(config['quality'])),
             config['gop'],
             args.framerate,
             config['bitrate'],
             actual_bitrate,
-            'Main', # Profile
+            config['profile'],
             vmaf_harmonic_mean,
             vmaf_std_dev,
             bpb,

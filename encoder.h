@@ -41,11 +41,13 @@
 class Encoder
 {
 public:
-    Encoder(Header inHeader, Header outHeader, bool hardware, std::string outputFile, int bitrate, std::string& mode, int quality, int gop)
+    Encoder(Header inHeader, Header outHeader, bool hardware, std::string outputFile, int bitrate, std::string& mode, int quality, int gop, const std::string profile, const std::string codec)
         : inWidth(inHeader.width)
         , inHeight(inHeader.height)
         , hardware(hardware)
     {
+        bool h265 = (codec == "h265" || codec == "hevc");
+
         // ------------------------------------------------------------------------
         // Initialize COM and Media Foundation
         // ------------------------------------------------------------------------
@@ -106,7 +108,7 @@ public:
 
             // Input & output types
             MFT_REGISTER_TYPE_INFO inInfo = { MFMediaType_Video, MFVideoFormat_NV12 };
-            MFT_REGISTER_TYPE_INFO outInfo = { MFMediaType_Video, MFVideoFormat_H264 };
+            MFT_REGISTER_TYPE_INFO outInfo = { MFMediaType_Video, h265 ? MFVideoFormat_HEVC : MFVideoFormat_H264 };
 
             //CComPtr<IMFAttributes> enumAttrs;
             //CHECK_HR(MFCreateAttributes(&enumAttrs, 1));
@@ -117,7 +119,7 @@ public:
             CHECK(activateCount != 0);
 
             // Choose the first returned encoder
-            CComPtr<IMFActivate> activate = activateRaw[hardware ? 1 : 0];
+            CComPtr<IMFActivate> activate = activateRaw[hardware && !h265 ? 1 : 0];
 
             // Print name
             UINT32 nameLength;
@@ -179,7 +181,7 @@ public:
             HRESULT hr_range = (codecApi->SetValue(&CODECAPI_AVEncCommonMeanBitRate, &meanBitrate));
             */
 
-            //CHECK_HR(transformAttrs->SetUINT32(MF_LOW_LATENCY, TRUE));
+            CHECK_HR(transformAttrs->SetUINT32(MF_LOW_LATENCY, TRUE));
             if (hardware)
             {
                 // Unlock the transform for async use and get event generator
@@ -210,12 +212,27 @@ public:
         CHECK_HR(MFCreateMediaType(&outputType));
 
         CHECK_HR(outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
-        CHECK_HR(outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264));
+        CHECK_HR(outputType->SetGUID(MF_MT_SUBTYPE, h265 ? MFVideoFormat_HEVC : MFVideoFormat_H264));
         CHECK_HR(outputType->SetUINT32(MF_MT_AVG_BITRATE, bitrate));
         CHECK_HR(MFSetAttributeSize(outputType, MF_MT_FRAME_SIZE, outHeader.width, outHeader.height));
         CHECK_HR(MFSetAttributeRatio(outputType, MF_MT_FRAME_RATE, outHeader.frameRate.num, outHeader.frameRate.den));
         CHECK_HR(outputType->SetUINT32(MF_MT_INTERLACE_MODE, 2));
         CHECK_HR(outputType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE));
+        if (!h265 || hardware) // software h265 only supports main profile
+        {
+            if (profile == "baseline")
+            {
+                CHECK_HR(outputType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base));
+            }
+            else if (profile == "high")
+            {
+                CHECK_HR(outputType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High));
+            }
+            else // main
+            {
+                CHECK_HR(outputType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main));
+            }
+        }
 
         CHECK_HR(transform->SetOutputType(outputStreamID, outputType, 0));
 
@@ -255,7 +272,8 @@ public:
         // Open the output file
         // ------------------------------------------------------------------------
 
-        fout.open(outputFile, std::ios::binary | std::ios::out | std::ios::trunc);
+        std::string outputFileName = outputFile + (h265 ? ".h265" : ".h264");
+        fout.open(outputFileName, std::ios::binary | std::ios::out | std::ios::trunc);
 
         // ------------------------------------------------------------------------
         // Start encoding
@@ -372,7 +390,7 @@ public:
                 CHECK_HR(outputBuffer.pSample->GetBufferByIndex(0, &outBuffer));
                 CHECK_HR(outBuffer->GetCurrentLength(&bufLength));
 
-                //printf("METransformHaveOutput buffers=%lu, bytes=%lu\n", bufCount, bufLength);
+                printf("METransformHaveOutput buffers=%lu, bytes=%lu\n", bufCount, bufLength);
 
                 // write bytes to file
                 BYTE* encodedData;

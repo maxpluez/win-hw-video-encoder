@@ -9,3 +9,5 @@
 *.yuv
 *.json
 *.csv
+*.h265
+*.hevc
