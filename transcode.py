@@ -7,7 +7,7 @@ import os
 import GPUtil
 import csv
 import json
-import np
+import statistics
 import math
 
 import boto3
@@ -219,7 +219,7 @@ def main():
         # Extract required data
         vmaf_harmonic_mean = vmaf_data["pooled_metrics"]["vmaf"]["harmonic_mean"]
         vmafs = [x["metrics"]["vmaf"] for x in vmaf_data["frames"]]
-        vmaf_std_dev = np.std(vmafs)
+        vmaf_std_dev = statistics.stdev(vmafs)
         bpb = vmaf_harmonic_mean / math.log2(int(actual_bitrate))
 
         # Get GPU name from device_id string
