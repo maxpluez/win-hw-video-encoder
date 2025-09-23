@@ -79,6 +79,7 @@ def parse_args():
     parser.add_argument('--mode', type=str, default='cbr', help='Encoding mode (default: cbr)')
     parser.add_argument('--codec', type=str, default='h264', help='Codec to use (default: h264)')
     parser.add_argument('--framerate', type=int, default=30, help='Frame rate of the video transcode (default: 30)')
+    parser.add_argument('--sso', type=bool, default=False, help='Use AWS SSO to login before uploading to S3')
     return parser.parse_args()
 
 
@@ -88,10 +89,11 @@ def main():
     # Example: print device id string
     device_id = generate_device_id()
 
-    aws_sso_cmd = ['aws', 'sso', 'login', '--profile', 'test-audiovisual']
-    result = subprocess.run(aws_sso_cmd)
-    if result.returncode != 0:
-        print('AWS SSO login failed. Will use existing AWS tokens in the environment.')
+    if (args.sso):
+        aws_sso_cmd = ['aws', 'sso', 'login', '--profile', 'test-audiovisual']
+        result = subprocess.run(aws_sso_cmd)
+        if result.returncode != 0:
+            print('AWS SSO login failed. Will use existing AWS tokens in the environment.')
 
     if args.compile:
         print('Compiling transcode.cpp...')
