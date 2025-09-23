@@ -113,13 +113,14 @@ def main():
     # [1.0, 1.5, 2.0, 2.5, 10.0]
     for bitrateGsun in bitratesGsun:
         bitrate = int(float(args.width) * float(args.height) * float(args.framerate) * bitrateGsun * GSUN)
-        for mode in modes:
-            hws = [True] if mode == 'fast' else hws
-            for hw in hws:
-                qualities = qualities if mode == 'quality' else [100]
-                for quality in qualities:
-                    for gop in gops:
-                        for profile in profiles:
+        for profile in profiles:
+            modes = ['cbr'] if profile == 'hevc' else modes
+            for mode in modes:
+                hws = [True] if mode == 'fast' else hws
+                for hw in hws:
+                    qualities = qualities if mode == 'quality' else [100]
+                    for quality in qualities:
+                        for gop in gops:
                             for codec in codecs:
                                 configs.append({ 'bitrate' : bitrate, 'hardware' : hw, 'mode': mode, 'quality': quality, 'gop': gop, 'profile': profile, 'codec': codec })
 
