@@ -79,7 +79,7 @@ def parse_args():
     parser.add_argument('--mode', type=str, default='cbr', help='Encoding mode (default: cbr)')
     parser.add_argument('--codec', type=str, default='h264', help='Codec to use (default: h264)')
     parser.add_argument('--framerate', type=int, default=30, help='Frame rate of the video transcode (default: 30)')
-    parser.add_argument('--sso', type=bool, default=False, help='Use AWS SSO to login before uploading to S3')
+    parser.add_argument('--sso', type=bool, default=True, help='Use AWS SSO to login before uploading to S3')
     return parser.parse_args()
 
 

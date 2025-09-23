@@ -120,6 +120,7 @@ public:
 
             // Choose the first returned encoder
             CComPtr<IMFActivate> activate = activateRaw[hardware && !h265 ? 1 : 0];
+            CHECK(activate);
 
             // Print name
             UINT32 nameLength;
