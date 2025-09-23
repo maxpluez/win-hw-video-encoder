@@ -115,15 +115,16 @@ def main():
     # [1.0, 1.5, 2.0, 2.5, 10.0]
     for bitrateGsun in bitratesGsun:
         bitrate = int(float(args.width) * float(args.height) * float(args.framerate) * bitrateGsun * GSUN)
-        for profile in profiles:
-            modes = ['cbr'] if profile == 'hevc' else modes
+        for codec in codecs:
+            modes = ['cbr'] if codec == 'hevc' else modes
+            profiles = ['main'] if codec == 'hevc' else profiles
             for mode in modes:
                 hws = [True] if mode == 'fast' else hws
+                qualities = qualities if mode == 'quality' else [100]
                 for hw in hws:
-                    qualities = qualities if mode == 'quality' else [100]
                     for quality in qualities:
                         for gop in gops:
-                            for codec in codecs:
+                            for profile in profiles:
                                 configs.append({ 'bitrate' : bitrate, 'hardware' : hw, 'mode': mode, 'quality': quality, 'gop': gop, 'profile': profile, 'codec': codec })
 
     # Create and write header to csv
