@@ -70,7 +70,7 @@ def upload_to_s3(file, device_id, s3_file_name):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Video transcode automation script.")
-    parser.add_argument('--compile', type=bool, default=True, help='Recompile the underlying C++ program')
+    parser.add_argument('--compile', type=bool, default=False, help='Recompile the underlying C++ program')
     parser.add_argument('--gop', type=int, default=30, help='GOP size of the video transcode')
     parser.add_argument('--bitrate', type=float, default=1, help='Bitrate of the video transcode, in gsuns')
     parser.add_argument('--width', type=int, default=1568, help='Width of the transcode resolution')
@@ -161,8 +161,29 @@ def main():
         # Run transcode.exe and capture output
         result = subprocess.run(transcode_cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            print('transcode.exe failed.')
-            sys.exit(1)
+            print('transcode.exe failed. Write a row in csv and continuing to the next config.')
+            csv_row = [
+                "",
+                "",
+                device_id,
+                gpu_name,
+                'Hardware' if config['hardware'] else 'Software',
+                config['codec'],
+                config['mode'] + ('' if config['mode'] != 'quality' else str(config['quality'])),
+                config['gop'],
+                args.framerate,
+                config['bitrate'],
+                0,
+                config['profile'],
+                0,
+                0,
+                0,
+                0
+            ]
+            with open(csv_file, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(csv_row)
+            continue
         # Parse encoding time from output
         encoding_time_ms = None
         for line in result.stdout.splitlines():
