@@ -103,11 +103,11 @@ def main():
             print('Compilation failed. Using the existing transcode.exe.')
     
     bitratesGsun = [1.0, 1.5, 2.0, 2.5, 3.0] # [1.0, 1.5, 2.0, 2.5, 10.0]
-    modes = ['cbr', 'vbr'] # ['cbr', 'vbr', 'quality', 'fast']
+    modes = ['cbr', 'vbr', 'quality'] # ['cbr', 'vbr', 'quality', 'fast']
     hws = [True, False] # [True, False]
-    qualities = [100] # [0, 50, 100]
+    qualities = [0, 50, 100] # [0, 50, 100]
     gops = [30, 90, 180] # [30, 90, 180]
-    profiles = ["main"] # ["baseline", "main", "high", "constrained", "simple"]
+    profiles = ["baseline", "main", "high"] # ["baseline", "main", "high", "constrained", "simple"]
     codecs = ["h264", "hevc"]
 
     #get all configurations to run
