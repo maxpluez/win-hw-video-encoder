@@ -34,9 +34,8 @@
 #include <mfobjects.h>
 
 // Error handling
-#define CHECK(x) if (!(x)) { printf("%s(%d) %s was false\n", __FILE__, __LINE__, #x); return; }
-#define CHECK_HR(x) { HRESULT hr_ = (x); if (FAILED(hr_)) { printf("%s(%d) %s failed with 0x%x\n", __FILE__, __LINE__, #x, (unsigned int)hr_); return; } }
-#define RETURN_FALSE_ON_FAILED_HR(x) { HRESULT hr_ = (x); if (FAILED(hr_)) { printf("%s(%d) %s failed with 0x%x\n", __FILE__, __LINE__, #x, (unsigned int)hr_); return false; } }
+#define CHECK(x) if (!(x)) { printf("%s(%d) %s was false\n", __FILE__, __LINE__, #x); exit(1); }
+#define CHECK_HR(x) { HRESULT hr_ = (x); if (FAILED(hr_)) { printf("%s(%d) %s failed with 0x%x\n", __FILE__, __LINE__, #x, (unsigned int)hr_); exit(1); } }
 
 class Encoder
 {
@@ -265,7 +264,7 @@ public:
         CHECK_HR(MFSetAttributeRatio(outputType, MF_MT_FRAME_RATE, outHeader.frameRate.num, outHeader.frameRate.den));
         CHECK_HR(outputType->SetUINT32(MF_MT_INTERLACE_MODE, 2));
         CHECK_HR(outputType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE));
-        if (!h265 || hardware) // software h265 only supports main profile
+        if (!h265) // h265 only supports main profile
         {
             if (profile == "baseline")
             {
@@ -506,7 +505,7 @@ public:
     bool swSendFrame(FrameParser& parser)
     {
         DWORD flags = 0;
-        RETURN_FALSE_ON_FAILED_HR(transform->GetInputStatus(0, &flags));
+        CHECK_HR(transform->GetInputStatus(0, &flags));
         if ((flags & MFT_INPUT_STATUS_ACCEPT_DATA) == false)
         {
             return true;
@@ -519,8 +518,8 @@ public:
         }
         CComPtr<IMFSample> sample;
         CComPtr<IMFMediaBuffer> memoryBuffer;
-        RETURN_FALSE_ON_FAILED_HR(MFCreateAlignedMemoryBuffer(frame->yuv.size(), MF_16_BYTE_ALIGNMENT, &memoryBuffer));
-        RETURN_FALSE_ON_FAILED_HR(MFCreateSample(&sample));
+        CHECK_HR(MFCreateAlignedMemoryBuffer(frame->yuv.size(), MF_16_BYTE_ALIGNMENT, &memoryBuffer));
+        CHECK_HR(MFCreateSample(&sample));
         BYTE* bufferData;
         memoryBuffer->Lock(&bufferData, nullptr, nullptr);
         memoryBuffer->SetCurrentLength(frame->yuv.size());
@@ -528,21 +527,21 @@ public:
         memoryBuffer->Unlock();
         sample->AddBuffer(memoryBuffer);
         // Other fields for sample
-        RETURN_FALSE_ON_FAILED_HR(sample->SetSampleTime(frame->pts));
-        RETURN_FALSE_ON_FAILED_HR(sample->SetSampleDuration(frame->duration));
-        RETURN_FALSE_ON_FAILED_HR(transform->ProcessInput(inputStreamID, sample, 0));
+        CHECK_HR(sample->SetSampleTime(frame->pts));
+        CHECK_HR(sample->SetSampleDuration(frame->duration));
+        CHECK_HR(transform->ProcessInput(inputStreamID, sample, 0));
         return true;
     }
 
     bool swReceivePacket()
     {
         MFT_OUTPUT_STREAM_INFO streamInfo;
-        RETURN_FALSE_ON_FAILED_HR(transform->GetOutputStreamInfo(0, &streamInfo));
+        CHECK_HR(transform->GetOutputStreamInfo(0, &streamInfo));
         CComPtr<IMFMediaBuffer> mediaBuffer;
         CComPtr<IMFSample> sampleOut;
-        RETURN_FALSE_ON_FAILED_HR(MFCreateSample(&sampleOut));
-        RETURN_FALSE_ON_FAILED_HR(MFCreateMemoryBuffer(streamInfo.cbSize, &mediaBuffer));
-        RETURN_FALSE_ON_FAILED_HR(sampleOut->AddBuffer(mediaBuffer));
+        CHECK_HR(MFCreateSample(&sampleOut));
+        CHECK_HR(MFCreateMemoryBuffer(streamInfo.cbSize, &mediaBuffer));
+        CHECK_HR(sampleOut->AddBuffer(mediaBuffer));
 
         MFT_OUTPUT_DATA_BUFFER outputBuffer = {};
         outputBuffer.dwStreamID = outputStreamID;
@@ -567,7 +566,7 @@ public:
             CComPtr<IMFMediaType> availableOutputType;
             for (DWORD typeIndex = 0;; ++typeIndex)
             {
-                RETURN_FALSE_ON_FAILED_HR(transform->GetOutputAvailableType(outputStreamID, typeIndex, &availableOutputType));
+                CHECK_HR(transform->GetOutputAvailableType(outputStreamID, typeIndex, &availableOutputType));
                 // Check if the type is H264
                 GUID majorType, subType;
                 availableOutputType->GetMajorType(&majorType);
@@ -601,30 +600,30 @@ public:
                 frameDenominator
             );
             // Set the new type
-            RETURN_FALSE_ON_FAILED_HR(transform->SetOutputType(outputStreamID, availableOutputType, 0));
+            CHECK_HR(transform->SetOutputType(outputStreamID, availableOutputType, 0));
             return true;
         }
         else
         {
-            RETURN_FALSE_ON_FAILED_HR(hr);
+            CHECK_HR(hr);
         }
 
         DWORD bufCount;
         DWORD bufLength;
-        RETURN_FALSE_ON_FAILED_HR(outputBuffer.pSample->GetBufferCount(&bufCount));
+        CHECK_HR(outputBuffer.pSample->GetBufferCount(&bufCount));
 
         CComPtr<IMFMediaBuffer> outBuffer;
-        RETURN_FALSE_ON_FAILED_HR(outputBuffer.pSample->GetBufferByIndex(0, &outBuffer));
-        RETURN_FALSE_ON_FAILED_HR(outBuffer->GetCurrentLength(&bufLength));
+        CHECK_HR(outputBuffer.pSample->GetBufferByIndex(0, &outBuffer));
+        CHECK_HR(outBuffer->GetCurrentLength(&bufLength));
 
         printf("METransformHaveOutput buffers=%lu, bytes=%lu\n", bufCount, bufLength);
 
         // write bytes to file
         BYTE* encodedData;
         DWORD encodedLength;
-        RETURN_FALSE_ON_FAILED_HR(outBuffer->Lock(&encodedData, nullptr, &encodedLength));
+        CHECK_HR(outBuffer->Lock(&encodedData, nullptr, &encodedLength));
         fout.write((char*)encodedData, encodedLength);
-        RETURN_FALSE_ON_FAILED_HR(outBuffer->Unlock());
+        CHECK_HR(outBuffer->Unlock());
 
         // Release the sample as it is not processed further.
         if (outputBuffer.pEvents)
