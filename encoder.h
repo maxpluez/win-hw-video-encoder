@@ -45,9 +45,8 @@ public:
         : inWidth(inHeader.width)
         , inHeight(inHeader.height)
         , hardware(hardware)
+        , h265(codec == "h265" || codec == "hevc")
     {
-        bool h265 = (codec == "h265" || codec == "hevc");
-
         // ------------------------------------------------------------------------
         // Initialize COM and Media Foundation
         // ------------------------------------------------------------------------
@@ -72,13 +71,22 @@ public:
 
                 CHECK_HR(adapter->GetDesc(&desc));
 
-                // Check for software adapter
-                if (desc.VendorId == 0x1002 || desc.VendorId == 0x10DE)
+                // Find hw adapter NVIDIA, Intel, AMD, and Qualcomm
+                if (desc.VendorId == 0x10DE || desc.VendorId == 0x8086 || desc.VendorId == 0x1002 || desc.VendorId == 0x4D4F4351)
                 {
                     break;
                 }
                 adapter.Release();
                 ZeroMemory(&desc, sizeof(desc));
+            }
+
+            if (adapter)
+            {
+                printf("Adapter: %ls\n", desc.Description);
+            }
+            else
+            {
+                printf("No suitable hardware adapter found\n");
             }
 
             D3D_FEATURE_LEVEL featureLevels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
@@ -118,22 +126,31 @@ public:
 
             CHECK(activateCount != 0);
 
-            // Choose the first returned encoder
-            CComPtr<IMFActivate> activate = activateRaw[hardware && !h265 ? 1 : 0];
-            CHECK(activate);
+            for (int activateIndex = 0; activateIndex < activateCount; ++activateIndex)
+            {
+                // Choose the first returned encoder
+                CComPtr<IMFActivate> activate = activateRaw[activateIndex];
+                CHECK(activate);
 
-            // Print name
-            UINT32 nameLength;
-            std::wstring name;
-            CHECK_HR(activate->GetStringLength(MFT_FRIENDLY_NAME_Attribute, &nameLength));
-            // IMFAttributes::GetString returns a null-terminated wide string
-            name.resize((size_t)nameLength + 1);
-            CHECK_HR(activate->GetString(MFT_FRIENDLY_NAME_Attribute, &name[0], (UINT32)name.size(), &nameLength));
-            name.resize(nameLength);
-            printf("Using %ls\n", name.c_str());
+                // Print name
+                UINT32 nameLength;
+                std::wstring name;
+                CHECK_HR(activate->GetStringLength(MFT_FRIENDLY_NAME_Attribute, &nameLength));
+                // IMFAttributes::GetString returns a null-terminated wide string
+                name.resize((size_t)nameLength + 1);
+                CHECK_HR(activate->GetString(MFT_FRIENDLY_NAME_Attribute, &name[0], (UINT32)name.size(), &nameLength));
+                name.resize(nameLength);
+                printf("Activating %ls\n", name.c_str());
 
-            // Activate
-            CHECK_HR(activate->ActivateObject(IID_PPV_ARGS(&transform)));
+                // Activate
+                HRESULT activated = (activate->ActivateObject(IID_PPV_ARGS(&transform)));
+                if (SUCCEEDED(activated))
+                {
+                    break;
+                }
+                activate->ShutdownObject();
+                transform.Release();
+            }
 
             // Memory management
             for (UINT32 i = 0; i < activateCount; i++)
@@ -156,10 +173,10 @@ public:
             rateControlMode.vt = VT_UI4;
             if (mode == "quality")
             {
-                VARIANT quality;
-                quality.vt = VT_UI4;
-                quality.ulVal = 0;
-                CHECK_HR(codecApi->SetValue(&CODECAPI_AVEncCommonQuality, &quality));
+                VARIANT qualityVar;
+                qualityVar.vt = VT_UI4;
+                qualityVar.ulVal = quality;
+                CHECK_HR(codecApi->SetValue(&CODECAPI_AVEncCommonQuality, &qualityVar));
                 rateControlMode.ulVal = eAVEncCommonRateControlMode_Quality;
             }
             else if (mode == "vbr")
@@ -175,12 +192,41 @@ public:
             gopSize.ulVal = gop;
             CHECK_HR(codecApi->SetValue(&CODECAPI_AVEncMPVGOPSize, &gopSize));
 
-            /*
+            VARIANT bPictureCount;
+            bPictureCount.vt = VT_UI4;
+            bPictureCount.ulVal = 0;
+            HRESULT hr = (codecApi->SetValue(&CODECAPI_AVEncMPVDefaultBPictureCount, &bPictureCount));
+            if (FAILED(hr))
+            {
+                printf("Warning: CODECAPI_AVEncMPVDefaultBPictureCount not supported\n");
+            }
+
+            VARIANT commonLowLatency;
+            commonLowLatency.vt = VT_BOOL;
+            commonLowLatency.boolVal = VARIANT_TRUE;
+            hr = (codecApi->SetValue(&CODECAPI_AVEncCommonLowLatency, &commonLowLatency));
+            if (FAILED(hr))
+            {
+                printf("Warning: CODECAPI_AVEncCommonLowLatency not supported\n");
+            }
+
+            VARIANT lowLatencyMode;
+            lowLatencyMode.vt = VT_BOOL;
+            lowLatencyMode.boolVal = VARIANT_TRUE;
+            hr = (codecApi->SetValue(&CODECAPI_AVLowLatencyMode, &lowLatencyMode));
+            if (FAILED(hr))
+            {
+                printf("Warning: CODECAPI_AVLowLatencyMode not supported\n");
+            }
+
             VARIANT meanBitrate;
             meanBitrate.vt = VT_UI4;
             meanBitrate.ulVal = bitrate;
-            HRESULT hr_range = (codecApi->SetValue(&CODECAPI_AVEncCommonMeanBitRate, &meanBitrate));
-            */
+            hr = (codecApi->SetValue(&CODECAPI_AVEncCommonMeanBitRate, &meanBitrate));
+            if (FAILED(hr))
+            {
+                printf("Warning: CODECAPI_AVEncCommonMeanBitRate not supported\n");
+            }
 
             CHECK_HR(transformAttrs->SetUINT32(MF_LOW_LATENCY, TRUE));
             if (hardware)
@@ -375,7 +421,53 @@ public:
                 HRESULT hr = (transform->ProcessOutput(0, 1, &outputBuffer, &status));
                 if (hr == MF_E_TRANSFORM_STREAM_CHANGE)
                 {
-                    printf("\n\n!!!!! Request Stream Change !!!!!\n\n");
+                    hr = transform->GetStreamIDs(1, &inputStreamID, 1, &outputStreamID);
+                    if (hr == E_NOTIMPL)
+                    {
+                        inputStreamID = 0;
+                        outputStreamID = 0;
+                        hr = S_OK;
+                    }
+
+                    CComPtr<IMFMediaType> availableOutputType;
+                    for (DWORD typeIndex = 0;; ++typeIndex)
+                    {
+                        CHECK_HR(transform->GetOutputAvailableType(outputStreamID, typeIndex, &availableOutputType));
+                        // Check if the type is H264
+                        GUID majorType, subType;
+                        availableOutputType->GetMajorType(&majorType);
+                        availableOutputType->GetGUID(MF_MT_SUBTYPE, &subType);
+                        if (majorType == MFMediaType_Video)
+                        {
+                            if (h265 && (subType == MFVideoFormat_H265 || subType == MFVideoFormat_HEVC))
+                            {
+                                // found
+                                break;
+                            }
+                            if (!h265 && subType == MFVideoFormat_H264)
+                            {
+                                // found
+                                break;
+                            }
+                        }
+                        availableOutputType.Release();
+                    }
+
+                    UINT32 width, height, bitrate, frameNumerator, frameDenominator;
+                    MFGetAttributeSize(availableOutputType, MF_MT_FRAME_SIZE, &width, &height);
+                    MFGetAttributeRatio(availableOutputType, MF_MT_FRAME_RATE, &frameNumerator, &frameDenominator);
+                    availableOutputType->GetUINT32(MF_MT_AVG_BITRATE, &bitrate);
+                    printf(
+                        "H264 output type changed: %u x %u, %u bps, %u/%u fps",
+                        width,
+                        height,
+                        bitrate,
+                        frameNumerator,
+                        frameDenominator
+                    );
+                    // Set the new type
+                    CHECK_HR(transform->SetOutputType(outputStreamID, availableOutputType, 0));
+                    continue;
                 }
                 else if (FAILED(hr))
                 {
@@ -464,7 +556,53 @@ public:
         }
         else if (hr == MF_E_TRANSFORM_STREAM_CHANGE)
         {
-            printf("\n\n!!!!! Request Stream Change !!!!!\n\n");
+            hr = transform->GetStreamIDs(1, &inputStreamID, 1, &outputStreamID);
+            if (hr == E_NOTIMPL)
+            {
+                inputStreamID = 0;
+                outputStreamID = 0;
+                hr = S_OK;
+            }
+
+            CComPtr<IMFMediaType> availableOutputType;
+            for (DWORD typeIndex = 0;; ++typeIndex)
+            {
+                RETURN_FALSE_ON_FAILED_HR(transform->GetOutputAvailableType(outputStreamID, typeIndex, &availableOutputType));
+                // Check if the type is H264
+                GUID majorType, subType;
+                availableOutputType->GetMajorType(&majorType);
+                availableOutputType->GetGUID(MF_MT_SUBTYPE, &subType);
+                if (majorType == MFMediaType_Video)
+                {
+                    if (h265 && (subType == MFVideoFormat_H265 || subType == MFVideoFormat_HEVC))
+                    {
+                        // found
+                        break;
+                    }
+                    if (!h265 && subType == MFVideoFormat_H264)
+                    {
+                        // found
+                        break;
+                    }
+                }
+                availableOutputType.Release();
+            }
+
+            UINT32 width, height, bitrate, frameNumerator, frameDenominator;
+            MFGetAttributeSize(availableOutputType, MF_MT_FRAME_SIZE, &width, &height);
+            MFGetAttributeRatio(availableOutputType, MF_MT_FRAME_RATE, &frameNumerator, &frameDenominator);
+            availableOutputType->GetUINT32(MF_MT_AVG_BITRATE, &bitrate);
+            printf(
+                "H264 output type changed: %u x %u, %u bps, %u/%u fps",
+                width,
+                height,
+                bitrate,
+                frameNumerator,
+                frameDenominator
+            );
+            // Set the new type
+            RETURN_FALSE_ON_FAILED_HR(transform->SetOutputType(outputStreamID, availableOutputType, 0));
+            return true;
         }
         else
         {
@@ -542,6 +680,7 @@ public:
 private:
     int inWidth, inHeight;
     bool hardware;
+    bool h265;
     std::ofstream fout;
 
     DXGI_ADAPTER_DESC desc;
