@@ -44,13 +44,16 @@ def generate_device_id():
     """
     # Device ID: use machine node or hostname
     device_id = platform.node() or os.environ.get('COMPUTERNAME', 'unknown')
-    # GPU name: use GPUtil if available
+    # GPU name
     gpu_name = 'UnknownGPU'
-    gpus = GPUtil.getGPUs()
-    if gpus:
-        gpu_name = gpus[0].name
-    else:
-        gpu_name = 'UnknownGPU'
+    result = subprocess.run(
+        ["powershell", "Get-CimInstance -ClassName Win32_VideoController | Select-Object -Property Name"],
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    if result.returncode == 0:
+        gpu_name = result.stdout.strip().splitlines()[2] if len(result.stdout.strip().splitlines()) > 2 else 'UnknownGPU'
     device_id_str = f"{device_id}-{gpu_name}"
     return device_id_str.replace(' ', '_')
 
