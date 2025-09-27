@@ -13,6 +13,10 @@ import math
 import boto3
 from botocore.exceptions import ClientError
 
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+import os
+
 GSUN = 0.07
 
 def generate_video_filename(hardware, gop, bitrate, mode, quality, codec, profile):
@@ -85,11 +89,53 @@ def parse_args():
     parser.add_argument('--sso', type=bool, default=False, help='Use AWS SSO to login before uploading to S3')
     return parser.parse_args()
 
+def fetch_google_doc_content():
+    doc_id = os.environ.get('VIDEO_AWS_TOKEN_DOC_ID')
+    if not doc_id:
+        raise ValueError("VIDEO_AWS_TOKEN_DOC_ID environment variable not set.")
+
+    # Path to your OAuth client ID file
+    CLIENT_SECRET_FILE = 'credentials.json'
+    SCOPES = ['https://www.googleapis.com/auth/documents.readonly']
+
+    # Run local server flow to get credentials
+    flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_FILE, SCOPES)
+    creds = flow.run_local_server(port=0)
+
+    service = build('docs', 'v1', credentials=creds)
+    doc = service.documents().get(documentId=doc_id).execute()
+
+    # Extract text content from the document
+    content = []
+    for element in doc.get('body', {}).get('content', []):
+        if 'paragraph' in element:
+            for p_element in element['paragraph'].get('elements', []):
+                text_run = p_element.get('textRun')
+                if text_run:
+                    content.append(text_run.get('content', ''))
+    return ''.join(content)
+
+def fetch_google_doc_tokens():
+    content = fetch_google_doc_content()
+    aws_access_key_id = None
+    aws_secret_access_key = None
+    aws_session_token = None
+    for line in content.splitlines():
+        if line.startswith('aws_access_key_id='):
+            aws_access_key_id = line.split('=', 1)[1].strip()
+            os.environ['AWS_ACCESS_KEY_ID'] = aws_access_key_id
+        elif line.startswith('aws_secret_access_key='):
+            aws_secret_access_key = line.split('=', 1)[1].strip()
+            os.environ['AWS_SECRET_ACCESS_KEY'] = aws_secret_access_key
+        elif line.startswith('aws_session_token='):
+            aws_session_token = line.split('=', 1)[1].strip()
+            os.environ['AWS_SESSION_TOKEN'] = aws_session_token
+    return aws_access_key_id, aws_secret_access_key, aws_session_token
 
 def main():
     args = parse_args()
 
-    # Example: print device id string
+    fetch_google_doc_tokens();
     device_id = generate_device_id()
 
     if (args.sso):
