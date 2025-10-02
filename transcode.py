@@ -77,7 +77,7 @@ def upload_to_s3(file, device_id, s3_file_name):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Video transcode automation script.")
-    parser.add_argument('--compile', type=bool, default=True, help='Recompile the underlying C++ program')
+    parser.add_argument('--compile', type=bool, default=False, help='Recompile the underlying C++ program')
     parser.add_argument('--gop', type=int, default=30, help='GOP size of the video transcode')
     parser.add_argument('--bitrate', type=float, default=1, help='Bitrate of the video transcode, in gsuns')
     parser.add_argument('--width', type=int, default=1568, help='Width of the transcode resolution')
