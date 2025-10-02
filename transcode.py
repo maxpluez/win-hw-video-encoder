@@ -19,12 +19,12 @@ import os
 
 GSUN = 0.07
 
-def generate_video_filename(hardware, gop, bitrate, mode, quality, codec, profile):
+def generate_video_filename(height, hardware, gop, bitrate, mode, quality, codec, profile):
     """
     Generate output video file name in the format:
     "sonic720p-g<gop>-<bitrate>-<mode>-<codec>-<profile>.mp4"
     """
-    return f"sonic720p-{'hw' if hardware else 'sw'}-g{gop}-{bitrate}-{mode}{str(quality) if mode == 'quality' else ''}-{codec}-{profile}.mp4"
+    return f"sonic{height}p-{'hw' if hardware else 'sw'}-g{gop}-{bitrate}-{mode}{str(quality) if mode == 'quality' else ''}-{codec}-{profile}.mp4"
 
 def generate_probe_filename(video_filename):
     """
@@ -77,7 +77,7 @@ def upload_to_s3(file, device_id, s3_file_name):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Video transcode automation script.")
-    parser.add_argument('--compile', type=bool, default=False, help='Recompile the underlying C++ program')
+    parser.add_argument('--compile', type=bool, default=True, help='Recompile the underlying C++ program')
     parser.add_argument('--gop', type=int, default=30, help='GOP size of the video transcode')
     parser.add_argument('--bitrate', type=float, default=1, help='Bitrate of the video transcode, in gsuns')
     parser.add_argument('--width', type=int, default=1568, help='Width of the transcode resolution')
@@ -151,32 +151,34 @@ def main():
         if result.returncode != 0:
             print('Compilation failed. Using the existing transcode.exe.')
     
-    bitratesGsun = [2.0] # [1.0, 1.5, 2.0, 2.5, 10.0]
-    modes = ['quality'] # ['cbr', 'vbr', 'quality', 'fast']
+    resolutions = [[1568, 720], [2336, 1080]] # [[1568, 720], [2336, 1080]]
+    bitratesGsun = [2.0, 2.5, 3.0] # [1.0, 1.5, 2.0, 2.5, 10.0]
+    modes = ['cbr', 'quality'] # ['cbr', 'vbr', 'quality', 'fast']
     hws = [True, False] # [True, False]
-    qualities = [10, 20, 30, 40] # [0, 50, 100]
-    gops = [30, 90, 180] # [30, 90, 180]
+    qualities = [10, 30] # [0, 50, 100]
+    gops = [30, 180] # [30, 90, 180]
     profiles = ["baseline", "main", "high"] # ["baseline", "main", "high", "constrained", "simple"]
-    codecs = ["h264", "hevc"]
+    codecs = ["h264", "hevc"] # ["h264", "hevc"]
 
     #get all configurations to run
     configs = []
     # [1.0, 1.5, 2.0, 2.5, 10.0]
-    for bitrateGsun in bitratesGsun:
-        bitrate = int(float(args.width) * float(args.height) * float(args.framerate) * bitrateGsun * GSUN)
-        for codec in codecs:
-            for mode in modes:
-                curr_qualities = qualities if mode == 'quality' else [100]
-                for hw in hws:
-                    for quality in curr_qualities:
-                        for gop in gops:
-                            for profile in profiles:
-                                configs.append({ 'bitrate' : bitrate, 'hardware' : hw, 'mode': mode, 'quality': quality, 'gop': gop, 'profile': profile, 'codec': codec })
+    for resolution in resolutions:
+        for bitrateGsun in bitratesGsun:
+            bitrate = int(float(resolution[0]) * float(resolution[1]) * float(args.framerate) * bitrateGsun * GSUN)
+            for codec in codecs:
+                for mode in modes:
+                    curr_qualities = qualities if mode == 'quality' else [100]
+                    for hw in hws:
+                        for quality in curr_qualities:
+                            for gop in gops:
+                                for profile in profiles:
+                                    configs.append({ 'bitrate' : bitrate, 'hardware' : hw, 'mode': mode, 'quality': quality, 'gop': gop, 'profile': profile, 'codec': codec, 'width': resolution[0], 'height': resolution[1] })
 
     # Create and write header to csv
     csv_file = 'windows_quality.csv'
     csv_header = [
-        'link', 'video id', 'device id', 'gpu', 'encoder', 'codec', 'mode', 'gop', 'fps',
+        'link', 'video id', 'device id', 'gpu', 'height', 'encoder', 'codec', 'mode', 'gop', 'fps',
         'requested_bitrate', 'actual_bitrate', 'profile', 'vmaf_hmean', 'vmaf_stddev', 'bpb', 'time_ms'
     ]
     with open(csv_file, 'w', newline='') as f:
@@ -203,6 +205,10 @@ def main():
             transcode_cmd += ['--profile', str(config['profile'])]
         if config['codec'] is not None:
             transcode_cmd += ['--codec', str(config['codec'])]
+        if config['width'] is not None:
+            transcode_cmd += ['--width', str(config['width'])]
+        if config['height'] is not None:
+            transcode_cmd += ['--height', str(config['height'])]
         #transcode_cmd += ['--width', str(args.width), '--height', str(args.height)]
         # Run transcode.exe and capture output
         result = subprocess.run(transcode_cmd, capture_output=True, text=True)
@@ -213,6 +219,7 @@ def main():
                 "",
                 device_id,
                 gpu_name,
+                config['height'],
                 'Hardware' if config['hardware'] else 'Software',
                 config['codec'],
                 config['mode'] + ('' if config['mode'] != 'quality' else str(config['quality'])),
@@ -260,10 +267,11 @@ def main():
         vmaf_command = [
             'ffmpeg',
             '-r', '30',
-            '-i', 'sonic720p.y4m',
+            '-i', 'sonic1080p.y4m',
             '-r', '30',
             '-i', 'vid.mp4',
-            '-lavfi', f"[0:v]setpts=PTS-STARTPTS[reference];[1:v]setpts=PTS-STARTPTS[distorted];[distorted][reference]libvmaf=log_fmt=json:log_path=vmaf.json:n_threads=4",
+            #'-lavfi', f"[0:v]setpts=PTS-STARTPTS[reference];[1:v]scale=2336:1080:flags=,setpts=PTS-STARTPTS[distorted];[distorted][reference]libvmaf=log_fmt=json:log_path=vmaf.json:n_threads=4",
+            '-lavfi', f"[0:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,scale=2336:1080:flags=bicubic[reference];[1:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,scale=2336:1080:flags=bicubic[distorted];[distorted][reference]libvmaf=log_fmt=json:log_path=vmaf.json:n_threads=4",
             '-f', 'null',
             '-'
         ]
@@ -296,7 +304,7 @@ def main():
         gpu_name = device_id.split('-')[-2] if 'unknown' not in device_id.lower() else 'UnknownGPU'
 
         # Construct S3 link
-        video_s3_file_name = generate_video_filename(config['hardware'], config['gop'], config['bitrate'], config['mode'], config['quality'], config['codec'], config['profile'])
+        video_s3_file_name = generate_video_filename(config['height'], config['hardware'], config['gop'], config['bitrate'], config['mode'], config['quality'], config['codec'], config['profile'])
         s3_link = f"https://audiovisual-test-public.s3.us-east-1.amazonaws.com/videos/video-quality/{device_id}/{video_s3_file_name}"
 
         # Prepare data row
@@ -305,6 +313,7 @@ def main():
             device_id + "/" + video_s3_file_name,
             device_id,
             gpu_name,
+            config['height'],
             'Hardware' if config['hardware'] else 'Software',
             config['codec'],
             config['mode'] + ('' if config['mode'] != 'quality' else str(config['quality'])),

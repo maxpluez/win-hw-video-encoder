@@ -142,21 +142,32 @@ public:
                 printf("Activating %ls\n", name.c_str());
 
                 // Activate
-                HRESULT activated = (activate->ActivateObject(IID_PPV_ARGS(&transform)));
-                if (SUCCEEDED(activated))
+                HRESULT hr = activate->ActivateObject(IID_PPV_ARGS(&transform));
+                if (SUCCEEDED(hr))
+                {
+                    CHECK_HR(transform->GetAttributes(&transformAttrs));
+                }
+                if (SUCCEEDED(hr) && hardware)
+                {
+                    hr = transformAttrs->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE);
+                }
+                if (SUCCEEDED(hr) && hardware)
+                {
+                    CHECK(eventGen = transform);
+                    hr = transform->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(deviceManager.p));
+                }
+                if (SUCCEEDED(hr))
                 {
                     break;
                 }
                 activate->ShutdownObject();
+                transformAttrs.Release();
                 transform.Release();
             }
 
             // Memory management
             for (UINT32 i = 0; i < activateCount; i++)
                 activateRaw[i]->Release();
-
-            // Get attributes
-            CHECK_HR(transform->GetAttributes(&transformAttrs));
         }
 
 
@@ -231,9 +242,7 @@ public:
             if (hardware)
             {
                 // Unlock the transform for async use and get event generator
-                CHECK_HR(transformAttrs->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE));
                 CHECK(eventGen = transform);
-                CHECK_HR(transform->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(deviceManager.p)));
             }
         }
 

@@ -32,17 +32,23 @@ int main(int argc, char** argv) {
     std::string codec = "h264";
     app.add_option("--codec", codec, "Codec to use for encoding with choice of h264 or h265");
 
+    int width = 1568;
+    app.add_option("--width", width, "Width of the input video, 1568 or 2336, default is 1568");
+
+    int height = 720;
+    app.add_option("--height", height, "Height of the input video, 720 or 1080, default is 720");
+
     CLI11_PARSE(app, argc, argv);
 
-    std::ifstream file("sonic720p.yuv", std::ios::binary);
+    std::ifstream file(height == 1080 ? "sonic1080p.yuv" : "sonic720p.yuv", std::ios::binary);
 
     Header inHeader;
-    inHeader.width = 1568;
-    inHeader.height = 720;
+    inHeader.width = width;
+    inHeader.height = height;
     inHeader.frameRate = Rational(30, 1);
     Header outHeader;
-    outHeader.width = 1568;
-    outHeader.height = 720;
+    outHeader.width = width;
+    outHeader.height = height;
     outHeader.frameRate = Rational(30, 1);
 
     std::unique_ptr<FrameParser> parser = std::make_unique<YUVParser>(file, inHeader);
