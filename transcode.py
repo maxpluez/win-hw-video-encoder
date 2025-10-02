@@ -19,12 +19,18 @@ import os
 
 GSUN = 0.07
 
-def generate_video_filename(height, hardware, gop, bitrate, mode, quality, codec, profile):
+def generate_video_filename_no_ext(height, hardware, gop, bitrate, mode, quality, codec, profile):
+    return f"sonic{height}p-{'hw' if hardware else 'sw'}-g{gop}-{bitrate}-{mode}{str(quality) if mode == 'quality' else ''}-{codec}-{profile}"
+
+def generate_video_filename(video_filename_no_ext):
     """
     Generate output video file name in the format:
     "sonic720p-g<gop>-<bitrate>-<mode>-<codec>-<profile>.mp4"
     """
-    return f"sonic{height}p-{'hw' if hardware else 'sw'}-g{gop}-{bitrate}-{mode}{str(quality) if mode == 'quality' else ''}-{codec}-{profile}.mp4"
+    return f"{video_filename_no_ext}.mp4"
+
+def generate_compressed_video_filename(video_filename_no_ext, codec):
+    return f"{video_filename_no_ext}.{codec}"
 
 def generate_probe_filename(video_filename):
     """
@@ -40,15 +46,7 @@ def generate_vmaf_filename(video_filename):
     """
     return f"{video_filename}.vmaf.json"
 
-def generate_device_id():
-    """
-    Generate a device ID string in the format:
-    "device id-device name-gpu name-hardware or software"
-    using OS information and GPUtil for GPU name.
-    """
-    # Device ID: use machine node or hostname
-    device_id = platform.node() or os.environ.get('COMPUTERNAME', 'unknown')
-    # GPU name
+def generate_gpu_name():
     gpu_name = 'UnknownGPU'
     result = subprocess.run(
         ["powershell", "Get-CimInstance -ClassName Win32_VideoController | Select-Object -Property Name"],
@@ -58,6 +56,16 @@ def generate_device_id():
     )
     if result.returncode == 0:
         gpu_name = result.stdout.strip().splitlines()[2] if len(result.stdout.strip().splitlines()) > 2 else 'UnknownGPU'
+    return gpu_name.replace(' ', '_')
+
+def generate_device_id(gpu_name):
+    """
+    Generate a device ID string in the format:
+    "device id-device name-gpu name-hardware or software"
+    using OS information and GPUtil for GPU name.
+    """
+    # Device ID: use machine node or hostname
+    device_id = platform.node() or os.environ.get('COMPUTERNAME', 'unknown')
     device_id_str = f"{device_id}-{gpu_name}"
     return device_id_str.replace(' ', '_')
 
@@ -136,7 +144,8 @@ def main():
     args = parse_args()
 
     fetch_google_doc_tokens();
-    device_id = generate_device_id()
+    gpu_name = generate_gpu_name()
+    device_id = generate_device_id(gpu_name)
 
     if (args.sso):
         aws_sso_cmd = ['aws', 'sso', 'login', '--profile', 'test-audiovisual']
@@ -181,42 +190,137 @@ def main():
         'link', 'video id', 'device id', 'gpu', 'height', 'encoder', 'codec', 'mode', 'gop', 'fps',
         'requested_bitrate', 'actual_bitrate', 'profile', 'vmaf_hmean', 'vmaf_stddev', 'bpb', 'time_ms'
     ]
-    with open(csv_file, 'w', newline='') as f:
-        writer = csv.writer(f)
+    with open(csv_file, 'w', newline='') as csv_f:
+        writer = csv.writer(csv_f)
         writer.writerow(csv_header)
 
-    for config in configs:
-        print("Running transcode with config: " + str(config))
-        print('Running transcode.exe...')
-        transcode_cmd = ['./transcode.exe']
-        #if args.gop is not None:
-        #    transcode_cmd += ['--gop', str(args.gop)]
-        if config['bitrate'] is not None and config['bitrate'] > 0:
-            transcode_cmd += ['--bitrate', str(config['bitrate'])]
-        if config['hardware'] is not None:
-            transcode_cmd += ['--hardware', str(config['hardware']).lower()]
-        if config['mode'] is not None:
-            transcode_cmd += ['--mode', str(config['mode'])]
-        if config['quality'] is not None and config['mode'] == 'quality':
-            transcode_cmd += ['--quality', str(config['quality'])]
-        if config['gop'] is not None:
-            transcode_cmd += ['--gop', str(config['gop'])]
-        if config['profile'] is not None:
-            transcode_cmd += ['--profile', str(config['profile'])]
-        if config['codec'] is not None:
-            transcode_cmd += ['--codec', str(config['codec'])]
-        if config['width'] is not None:
-            transcode_cmd += ['--width', str(config['width'])]
-        if config['height'] is not None:
-            transcode_cmd += ['--height', str(config['height'])]
-        #transcode_cmd += ['--width', str(args.width), '--height', str(args.height)]
-        # Run transcode.exe and capture output
-        result = subprocess.run(transcode_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            print('transcode.exe failed. Write a row in csv and continuing to the next config.')
+        for config in configs:
+            video_file_name_no_ext = generate_video_filename_no_ext(config['height'], config['hardware'], config['gop'], config['bitrate'], config['mode'], config['quality'], config['codec'], config['profile'])
+            video_s3_file_name = generate_video_filename(video_file_name_no_ext)
+            compressed_video_file_name = generate_compressed_video_filename(video_file_name_no_ext, config['codec'])
+            probe_file_name = generate_probe_filename(video_s3_file_name)
+            vmaf_file_name = generate_vmaf_filename(video_s3_file_name)
+
+
+            print("Running transcode with config: " + str(config))
+            print('Running transcode.exe...')
+            transcode_cmd = ['./transcode.exe']
+            transcode_cmd += ['--out', video_file_name_no_ext]
+            #if args.gop is not None:
+            #    transcode_cmd += ['--gop', str(args.gop)]
+            if config['bitrate'] is not None and config['bitrate'] > 0:
+                transcode_cmd += ['--bitrate', str(config['bitrate'])]
+            if config['hardware'] is not None:
+                transcode_cmd += ['--hardware', str(config['hardware']).lower()]
+            if config['mode'] is not None:
+                transcode_cmd += ['--mode', str(config['mode'])]
+            if config['quality'] is not None and config['mode'] == 'quality':
+                transcode_cmd += ['--quality', str(config['quality'])]
+            if config['gop'] is not None:
+                transcode_cmd += ['--gop', str(config['gop'])]
+            if config['profile'] is not None:
+                transcode_cmd += ['--profile', str(config['profile'])]
+            if config['codec'] is not None:
+                transcode_cmd += ['--codec', str(config['codec'])]
+            if config['width'] is not None:
+                transcode_cmd += ['--width', str(config['width'])]
+            if config['height'] is not None:
+                transcode_cmd += ['--height', str(config['height'])]
+            #transcode_cmd += ['--width', str(args.width), '--height', str(args.height)]
+            # Run transcode.exe and capture output
+            result = subprocess.run(transcode_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print('transcode.exe failed. Write a row in csv and continuing to the next config.')
+                csv_row = [
+                    "",
+                    "",
+                    device_id,
+                    gpu_name,
+                    config['height'],
+                    'Hardware' if config['hardware'] else 'Software',
+                    config['codec'],
+                    config['mode'] + ('' if config['mode'] != 'quality' else str(config['quality'])),
+                    config['gop'],
+                    args.framerate,
+                    config['bitrate'],
+                    0,
+                    config['profile'],
+                    0,
+                    0,
+                    0,
+                    0
+                ]
+                writer.writerow(csv_row)
+                continue
+            # Parse encoding time from output
+            encoding_time_ms = None
+            for line in result.stdout.splitlines():
+                if line.startswith('Encoding time:'):
+                    try:
+                        encoding_time_ms = float(line.split(':')[1].strip().split()[0])
+                    except Exception:
+                        encoding_time_ms = None
+                    break
+
+            print(f'Running ffmpeg to mux output to mp4...')
+            ffmpeg_cmd = ['ffmpeg', '-r', '30', '-i', compressed_video_file_name, '-c', 'copy', '-y', video_s3_file_name]
+            result = subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if result.returncode != 0:
+                print('ffmpeg failed.')
+                sys.exit(1)
+
+            print(f'Running ffprobe...')
+            ffprobe_cmd = ['ffprobe', '-print_format', 'json', '-show_frames', '-show_streams', video_s3_file_name]
+            with open(probe_file_name, 'w') as f:
+                result = subprocess.run(ffprobe_cmd, stdout=f, stderr=subprocess.DEVNULL)
+                if result.returncode != 0:
+                    print('ffprobe failed.')
+                    sys.exit(1)
+
+            print(f'Running vmaf...')
+            vmaf_command = [
+                'ffmpeg',
+                '-r', '30',
+                '-i', 'sonic1080p.y4m',
+                '-r', '30',
+                '-i', video_s3_file_name,
+                #'-lavfi', f"[0:v]setpts=PTS-STARTPTS[reference];[1:v]scale=2336:1080:flags=,setpts=PTS-STARTPTS[distorted];[distorted][reference]libvmaf=log_fmt=json:log_path=vmaf.json:n_threads=4",
+                '-lavfi', f"[0:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,scale=2336:1080:flags=bicubic[reference];[1:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,scale=2336:1080:flags=bicubic[distorted];[distorted][reference]libvmaf=log_fmt=json:log_path={vmaf_file_name}:n_threads=4",
+                '-f', 'null',
+                '-'
+            ]
+            result = subprocess.run(vmaf_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if result.returncode != 0:
+                print('ffprobe failed.')
+                sys.exit(1)
+
+            # --- CSV WRITING LOGIC ---
+            # Read VMAF and probe data
+            with open(vmaf_file_name, 'r') as f:
+                vmaf_data = json.load(f)
+            with open(probe_file_name, 'r') as f:
+                probe_data = json.load(f)
+
+            # Find video stream and get actual bitrate
+            actual_bitrate = None
+            for stream in probe_data.get('streams', []):
+                if stream.get('codec_type') == 'video':
+                    actual_bitrate = stream.get('bit_rate')
+                    break
+
+            # Extract required data
+            vmaf_harmonic_mean = vmaf_data["pooled_metrics"]["vmaf"]["harmonic_mean"]
+            vmafs = [x["metrics"]["vmaf"] for x in vmaf_data["frames"]]
+            vmaf_std_dev = statistics.stdev(vmafs)
+            bpb = vmaf_harmonic_mean / math.log2(int(actual_bitrate))
+
+            # Construct S3 link
+            s3_link = f"https://audiovisual-test-public.s3.us-east-1.amazonaws.com/videos/video-quality/{device_id}/{video_s3_file_name}"
+
+            # Prepare data row
             csv_row = [
-                "",
-                "",
+                s3_link,
+                device_id + "/" + video_s3_file_name,
                 device_id,
                 gpu_name,
                 config['height'],
@@ -226,122 +330,27 @@ def main():
                 config['gop'],
                 args.framerate,
                 config['bitrate'],
-                0,
+                actual_bitrate,
                 config['profile'],
-                0,
-                0,
-                0,
-                0
+                vmaf_harmonic_mean,
+                vmaf_std_dev,
+                bpb,
+                str(encoding_time_ms) if encoding_time_ms is not None else 'N/A'
             ]
-            with open(csv_file, 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(csv_row)
-            continue
-        # Parse encoding time from output
-        encoding_time_ms = None
-        for line in result.stdout.splitlines():
-            if line.startswith('Encoding time:'):
-                try:
-                    encoding_time_ms = float(line.split(':')[1].strip().split()[0])
-                except Exception:
-                    encoding_time_ms = None
-                break
 
-        print(f'Running ffmpeg to mux output to vid.mp4...')
-        raw_vid = f'vid.{'h265' if (config['codec'] is not None and (config['codec'] == 'hevc' or config['codec'] == 'h265')) else 'h264' }'
-        ffmpeg_cmd = ['ffmpeg', '-r', '30', '-i', raw_vid, '-c', 'copy', '-y', 'vid.mp4']
-        result = subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if result.returncode != 0:
-            print('ffmpeg failed.')
-            sys.exit(1)
-
-        print(f'Running ffprobe...')
-        ffprobe_cmd = ['ffprobe', '-print_format', 'json', '-show_frames', '-show_streams', 'vid.mp4']
-        with open('probe.json', 'w') as f:
-            result = subprocess.run(ffprobe_cmd, stdout=f, stderr=subprocess.DEVNULL)
-            if result.returncode != 0:
-                print('ffprobe failed.')
-                sys.exit(1)
-
-        print(f'Running vmaf...')
-        vmaf_command = [
-            'ffmpeg',
-            '-r', '30',
-            '-i', 'sonic1080p.y4m',
-            '-r', '30',
-            '-i', 'vid.mp4',
-            #'-lavfi', f"[0:v]setpts=PTS-STARTPTS[reference];[1:v]scale=2336:1080:flags=,setpts=PTS-STARTPTS[distorted];[distorted][reference]libvmaf=log_fmt=json:log_path=vmaf.json:n_threads=4",
-            '-lavfi', f"[0:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,scale=2336:1080:flags=bicubic[reference];[1:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,scale=2336:1080:flags=bicubic[distorted];[distorted][reference]libvmaf=log_fmt=json:log_path=vmaf.json:n_threads=4",
-            '-f', 'null',
-            '-'
-        ]
-        result = subprocess.run(vmaf_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if result.returncode != 0:
-            print('ffprobe failed.')
-            sys.exit(1)
-
-        # --- CSV WRITING LOGIC ---
-        # Read VMAF and probe data
-        with open('vmaf.json', 'r') as f:
-            vmaf_data = json.load(f)
-        with open('probe.json', 'r') as f:
-            probe_data = json.load(f)
-
-        # Find video stream and get actual bitrate
-        actual_bitrate = None
-        for stream in probe_data.get('streams', []):
-            if stream.get('codec_type') == 'video':
-                actual_bitrate = stream.get('bit_rate')
-                break
-
-        # Extract required data
-        vmaf_harmonic_mean = vmaf_data["pooled_metrics"]["vmaf"]["harmonic_mean"]
-        vmafs = [x["metrics"]["vmaf"] for x in vmaf_data["frames"]]
-        vmaf_std_dev = statistics.stdev(vmafs)
-        bpb = vmaf_harmonic_mean / math.log2(int(actual_bitrate))
-
-        # Get GPU name from device_id string
-        gpu_name = device_id.split('-')[-2] if 'unknown' not in device_id.lower() else 'UnknownGPU'
-
-        # Construct S3 link
-        video_s3_file_name = generate_video_filename(config['height'], config['hardware'], config['gop'], config['bitrate'], config['mode'], config['quality'], config['codec'], config['profile'])
-        s3_link = f"https://audiovisual-test-public.s3.us-east-1.amazonaws.com/videos/video-quality/{device_id}/{video_s3_file_name}"
-
-        # Prepare data row
-        csv_row = [
-            s3_link,
-            device_id + "/" + video_s3_file_name,
-            device_id,
-            gpu_name,
-            config['height'],
-            'Hardware' if config['hardware'] else 'Software',
-            config['codec'],
-            config['mode'] + ('' if config['mode'] != 'quality' else str(config['quality'])),
-            config['gop'],
-            args.framerate,
-            config['bitrate'],
-            actual_bitrate,
-            config['profile'],
-            vmaf_harmonic_mean,
-            vmaf_std_dev,
-            bpb,
-            str(encoding_time_ms) if encoding_time_ms is not None else 'N/A'
-        ]
-
-        # Append row to CSV
-        with open(csv_file, 'a', newline='') as f:
-            writer = csv.writer(f)
+            # Append row to CSV
             writer.writerow(csv_row)
-        # --- END CSV WRITING LOGIC ---
+            # --- END CSV WRITING LOGIC ---
 
-        upload_to_s3('vid.mp4', device_id, video_s3_file_name)
-        upload_to_s3('probe.json', device_id, generate_probe_filename(video_s3_file_name))
-        upload_to_s3('vmaf.json', device_id, generate_vmaf_filename(video_s3_file_name))
+            upload_to_s3(video_s3_file_name, device_id, video_s3_file_name)
+            upload_to_s3(probe_file_name, device_id, probe_file_name)
+            upload_to_s3(vmaf_file_name, device_id, vmaf_file_name)
 
-    os.remove('vid.h264')
-    os.remove('vid.mp4')
-    os.remove('probe.json')
-    os.remove('vmaf.json')
+            os.remove(compressed_video_file_name)
+            os.remove(video_s3_file_name)
+            os.remove(probe_file_name)
+            os.remove(vmaf_file_name)
+
     print('Done.')
 
 if __name__ == '__main__':

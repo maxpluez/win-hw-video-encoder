@@ -327,7 +327,7 @@ public:
         // Open the output file
         // ------------------------------------------------------------------------
 
-        std::string outputFileName = outputFile + (h265 ? ".h265" : ".h264");
+        std::string outputFileName = outputFile + (h265 ? ".hevc" : ".h264");
         fout.open(outputFileName, std::ios::binary | std::ios::out | std::ios::trunc);
 
         // ------------------------------------------------------------------------

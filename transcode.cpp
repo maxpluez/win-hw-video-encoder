@@ -38,6 +38,9 @@ int main(int argc, char** argv) {
     int height = 720;
     app.add_option("--height", height, "Height of the input video, 720 or 1080, default is 720");
 
+    std::string out = "vid";
+    app.add_option("--out", out, "Output file name without extension, default is vid");
+
     CLI11_PARSE(app, argc, argv);
 
     std::ifstream file(height == 1080 ? "sonic1080p.yuv" : "sonic720p.yuv", std::ios::binary);
@@ -53,7 +56,7 @@ int main(int argc, char** argv) {
 
     std::unique_ptr<FrameParser> parser = std::make_unique<YUVParser>(file, inHeader);
 
-    Encoder encoder(inHeader, outHeader, hw, "vid", bitrate, mode, quality, gop, profile, codec);
+    Encoder encoder(inHeader, outHeader, hw, out, bitrate, mode, quality, gop, profile, codec);
     auto start = std::chrono::high_resolution_clock::now();
     encoder.encode(*parser);
     auto end = std::chrono::high_resolution_clock::now();
