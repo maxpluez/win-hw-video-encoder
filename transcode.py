@@ -4,7 +4,6 @@ import sys
 
 import platform
 import os
-import GPUtil
 import csv
 import json
 import statistics
@@ -346,6 +345,7 @@ def main():
 
     end_time = time.time()
     print(f'Done in {end_time - start_time:.2f} seconds.')
+    print(f'Device ID: {device_id}')
 
 if __name__ == '__main__':
     main()
