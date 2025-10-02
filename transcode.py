@@ -289,12 +289,12 @@ def main():
             print('Compilation failed. Using the existing transcode.exe.')
     
     resolutions = [[1568, 720], [2336, 1080]] # [[1568, 720], [2336, 1080]]
-    bitratesGsun = [2.0, 3.0, 4.0] # [1.0, 1.5, 2.0, 2.5, 10.0]
+    bitratesGsun = [2.0, 3.0, 4.0] # [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 10.0]
     modes = ['cbr', 'quality'] # ['cbr', 'vbr', 'quality', 'fast']
     hws = [True, False] # [True, False]
-    qualities = [10, 30] # [0, 50, 100]
+    qualities = [10, 30] # [0, 10, 20, 30, 50, 100]
     gops = [30, 180] # [30, 90, 180]
-    profiles = ["baseline", "main", "high"] # ["baseline", "main", "high", "constrained", "simple"]
+    profiles = ["baseline", "main", "high"] # ["baseline", "main", "high"]
     codecs = ["h264", "hevc"] # ["h264", "hevc"]
 
     #get all configurations to run
@@ -341,6 +341,8 @@ def main():
                 result = process_config(config, args, device_id, gpu_name)
                 if result:
                     writer.writerow(result)
+
+    upload_to_s3(csv_file, device_id, csv_file)
 
     end_time = time.time()
     print(f'Done in {end_time - start_time:.2f} seconds.')
