@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
 
     CLI11_PARSE(app, argc, argv);
 
-    std::ifstream file(height == 1080 ? "sonic1080p.yuv" : "sonic720p.yuv", std::ios::binary);
+    std::ifstream file(height == 1080 ? "brainrot1080p.yuv" : "brainrot720p.yuv", std::ios::binary);
 
     Header inHeader;
     inHeader.width = width;

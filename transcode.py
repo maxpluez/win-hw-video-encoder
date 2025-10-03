@@ -8,6 +8,7 @@ import csv
 import json
 import statistics
 import math
+import shutil
 
 import boto3
 from botocore.exceptions import ClientError
@@ -24,13 +25,9 @@ import time
 GSUN = 0.07
 
 def generate_video_filename_no_ext(height, hardware, gop, bitrate, mode, quality, codec, profile):
-    return f"sonic{height}p-{'hw' if hardware else 'sw'}-g{gop}-{bitrate}-{mode}{str(quality) if mode == 'quality' else ''}-{codec}-{profile}"
+    return f"brainrot{height}p-{'hw' if hardware else 'sw'}-g{gop}-{bitrate}-{mode}{str(quality) if mode == 'quality' else ''}-{codec}-{profile}"
 
 def generate_video_filename(video_filename_no_ext):
-    """
-    Generate output video file name in the format:
-    "sonic720p-g<gop>-<bitrate>-<mode>-<codec>-<profile>.mp4"
-    """
     return f"{video_filename_no_ext}.mp4"
 
 def generate_compressed_video_filename(video_filename_no_ext, codec):
@@ -78,12 +75,19 @@ def upload_to_s3(file, device_id, s3_file_name):
     object_name = "videos/video-quality/" + device_id + "/" + s3_file_name
 
     # Upload the file
-    s3_client = boto3.client('s3')
     try:
+        s3_client = boto3.client('s3')
         response = s3_client.upload_file(file, 'audiovisual-test-public', object_name, ExtraArgs={'ACL': 'public-read'})
         print("Upload succeeded with response:", response)
     except ClientError as e:
         print("Upload failed with error:", e)
+        
+        # Copy file to local directory if S3 upload fails
+        local_dir = os.path.expanduser('~/Videos/Roblox/toy')
+        os.makedirs(local_dir, exist_ok=True)
+        shutil.copy(file, os.path.join(local_dir, os.path.basename(file)))
+        print(f"Copied {file} to {local_dir}")
+
         return False
     return True
 
@@ -212,8 +216,8 @@ def process_config(config, args, device_id, gpu_name):
 
         print(f'Running vmaf for {config}')
         vmaf_command = [
-            'ffmpeg', '-r', '30', '-i', 'sonic1080p.y4m', '-r', '30', '-i', video_s3_file_name,
-            '-lavfi', f"[0:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,scale={config['width']}:{config['height']}:flags=bicubic[reference];[1:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,scale={config['width']}:{config['height']}:flags=bicubic[distorted];[distorted][reference]libvmaf=log_fmt=json:log_path={vmaf_file_name}:n_threads=4",
+            'ffmpeg', '-r', '30', '-i', 'brainrot1080p.y4m', '-r', '30', '-i', video_s3_file_name,
+            '-lavfi', f"[0:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,split[reference0][reference1];[1:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30[temp];[temp][reference0]scale=rw:rh:flags=bicubic[distorted];[distorted][reference1]libvmaf=log_fmt=json:log_path={vmaf_file_name}:n_threads=4",
             '-f', 'null', '-'
         ]
         result = subprocess.run(vmaf_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -287,12 +291,13 @@ def main():
         if result.returncode != 0:
             print('Compilation failed. Using the existing transcode.exe.')
     
-    resolutions = [[1568, 720], [2336, 1080]] # [[1568, 720], [2336, 1080]]
+    #resolutions = [[1568, 720], [2336, 1080]] # [[1568, 720], [2336, 1080]]
+    resolutions = [[1728, 720], [2592, 1080]]
     bitratesGsun = [2.0, 3.0, 4.0] # [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 10.0]
-    modes = ['cbr', 'quality'] # ['cbr', 'vbr', 'quality', 'fast']
+    modes = ['cbr'] # ['cbr', 'vbr', 'quality', 'fast']
     hws = [True, False] # [True, False]
     qualities = [10, 30] # [0, 10, 20, 30, 50, 100]
-    gops = [30, 180] # [30, 90, 180]
+    gops = [180] # [30, 90, 180]
     profiles = ["baseline", "main", "high"] # ["baseline", "main", "high"]
     codecs = ["h264", "hevc"] # ["h264", "hevc"]
 
