@@ -121,7 +121,7 @@ public:
             //CHECK_HR(MFCreateAttributes(&enumAttrs, 1));
             //CHECK_HR(enumAttrs->SetBlob(MFT_ENUM_ADAPTER_LUID, (BYTE*)&desc.AdapterLuid, sizeof(LUID)));
 
-            CHECK_HR(MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, hardware ? MFT_ENUM_FLAG_HARDWARE : 0, &inInfo, &outInfo, &activateRaw, &activateCount));
+            CHECK_HR(MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_SORTANDFILTER | (hardware ? MFT_ENUM_FLAG_HARDWARE : 0), &inInfo, &outInfo, &activateRaw, &activateCount));
 
             CHECK(activateCount != 0);
 
@@ -140,12 +140,30 @@ public:
                 CHECK_HR(activate->GetString(MFT_FRIENDLY_NAME_Attribute, &name[0], (UINT32)name.size(), &nameLength));
                 name.resize(nameLength);
                 printf("Activating %ls\n", name.c_str());
+                
+                UINT32 urlLength;
+                std::wstring url;
+                CHECK_HR(activate->GetStringLength(MFT_ENUM_HARDWARE_VENDOR_ID_Attribute, &urlLength));
+                // IMFAttributes::GetString returns a null-terminated wide string
+                url.resize((size_t)urlLength + 1);
+                CHECK_HR(activate->GetString(MFT_ENUM_HARDWARE_VENDOR_ID_Attribute, &url[0], (UINT32)url.size(), &urlLength));
+                url.resize(urlLength);
+                printf("Activating %ls\n", url.c_str());
 
                 // Activate
                 HRESULT hr = activate->ActivateObject(IID_PPV_ARGS(&transform));
                 if (SUCCEEDED(hr))
                 {
                     CHECK_HR(transform->GetAttributes(&transformAttrs));
+                }
+                if (SUCCEEDED(hr) && hardware)
+                {
+                    CHECK_HR(transformAttrs->GetStringLength(MFT_ENUM_HARDWARE_VENDOR_ID_Attribute, &urlLength));
+                    // IMFAttributes::GetString returns a null-terminated wide string
+                    url.resize((size_t)urlLength + 1);
+                    CHECK_HR(transformAttrs->GetString(MFT_ENUM_HARDWARE_VENDOR_ID_Attribute, &url[0], (UINT32)url.size(), &urlLength));
+                    url.resize(urlLength);
+                    printf("Activating %ls\n", url.c_str());
                 }
                 if (SUCCEEDED(hr) && hardware)
                 {
